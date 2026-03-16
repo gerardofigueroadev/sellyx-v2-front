@@ -335,9 +335,10 @@ export default function ShiftsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Turnos abiertos siempre visibles (sin importar periodo), cerrados filtrados por periodo
+  // Turnos abiertos siempre visibles; cerrados se ubican por closedAt (no openedAt)
+  // para que un turno abierto ayer y cerrado hoy aparezca en "Hoy"
   const periodShifts = shifts.filter(s =>
-    s.status === 'open' || inPeriod(s.openedAt, period)
+    s.status === 'open' || inPeriod(s.closedAt ?? s.openedAt, period)
   );
 
   const filtered = periodShifts.filter(s => {
