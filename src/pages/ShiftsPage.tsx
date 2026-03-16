@@ -52,6 +52,7 @@ function duration(from: string, to: string | null) {
 }
 
 function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: string; orgName: string }) {
+  const { currency } = useAuth();
   const [loading,    setLoading]    = useState(false);
   const [reportData, setReportData] = useState<ShiftReport | null>(null);
 
@@ -77,7 +78,7 @@ function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: stri
 
   return (
     <>
-      {reportData && <ShiftPrintReceipt data={reportData} orgName={orgName} />}
+      {reportData && <ShiftPrintReceipt data={reportData} orgName={orgName} currency={currency} />}
       <button
         onClick={handlePrint}
         disabled={loading}
@@ -95,6 +96,7 @@ function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: stri
 
 // ─── Summary Modal ────────────────────────────────────────────────────────────
 function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; token: string; orgName: string; onClose: () => void }) {
+  const { currency } = useAuth();
   const [data, setData] = useState<ShiftSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -143,18 +145,18 @@ function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; t
             {/* Ventas */}
             <div className="space-y-2">
               <Row label="Total pedidos" value={`${s.totalOrders} órdenes`} />
-              <Row label="Ventas totales" value={`Bs. ${s.totalSales.toFixed(2)}`} highlight />
-              <Row label="Ventas efectivo" value={`Bs. ${s.cashSales.toFixed(2)}`} />
-              <Row label="Ventas QR / digital" value={`Bs. ${s.digitalSales.toFixed(2)}`} />
+              <Row label="Ventas totales" value={`${currency} ${s.totalSales.toFixed(2)}`} highlight />
+              <Row label="Ventas efectivo" value={`${currency} ${s.cashSales.toFixed(2)}`} />
+              <Row label="Ventas QR / digital" value={`${currency} ${s.digitalSales.toFixed(2)}`} />
             </div>
 
             {/* Caja */}
             {s.shift.type === 'pos' && (
               <div className="border-t border-slate-700/50 pt-3 space-y-2">
-                <Row label="Efectivo inicial" value={`Bs. ${Number(s.shift.openingAmount).toFixed(2)}`} />
-                <Row label="Efectivo esperado" value={`Bs. ${s.expectedCash.toFixed(2)}`} />
+                <Row label="Efectivo inicial" value={`${currency} ${Number(s.shift.openingAmount).toFixed(2)}`} />
+                <Row label="Efectivo esperado" value={`${currency} ${s.expectedCash.toFixed(2)}`} />
                 {s.closingAmount !== null && (
-                  <Row label="Efectivo contado" value={`Bs. ${s.closingAmount.toFixed(2)}`} />
+                  <Row label="Efectivo contado" value={`${currency} ${s.closingAmount.toFixed(2)}`} />
                 )}
                 {s.difference !== null && (
                   <div className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold ${
@@ -163,7 +165,7 @@ function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; t
                                         'bg-red-500/10 text-red-400'
                   }`}>
                     <span>Diferencia</span>
-                    <span>{s.difference > 0 ? '+' : ''}Bs. {s.difference.toFixed(2)}</span>
+                    <span>{s.difference > 0 ? '+' : ''}{currency} {s.difference.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -192,6 +194,7 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
 
 // ─── Shift Card ───────────────────────────────────────────────────────────────
 function ShiftCard({ shift, onViewSummary }: { shift: Shift; onViewSummary: (id: number) => void }) {
+  const { currency } = useAuth();
   const isOpen   = shift.status === 'open';
   const isSystem = shift.type === 'system';
 
@@ -253,11 +256,11 @@ function ShiftCard({ shift, onViewSummary }: { shift: Shift; onViewSummary: (id:
       {!isSystem && (
         <div className="flex items-center justify-between text-xs border-t border-slate-700/40 pt-2">
           <span className="text-slate-500">Apertura caja</span>
-          <span className="text-slate-300 font-medium">Bs. {Number(shift.openingAmount).toFixed(2)}</span>
+          <span className="text-slate-300 font-medium">{currency} {Number(shift.openingAmount).toFixed(2)}</span>
           {shift.closingAmount !== null && (
             <>
               <span className="text-slate-600">→</span>
-              <span className="text-slate-300 font-medium">Bs. {Number(shift.closingAmount).toFixed(2)}</span>
+              <span className="text-slate-300 font-medium">{currency} {Number(shift.closingAmount).toFixed(2)}</span>
             </>
           )}
         </div>
@@ -313,30 +316,24 @@ function PeriodFilter({ value, onChange }: { value: Period; onChange: (p: Period
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function ShiftsPage() {
-  const { token, hasPermission, user } = useAuth();
+  const { token, user, activeBranchId } = useAuth();
   const orgName = (user as any)?.organization?.name ?? 'Mi Negocio';
-  const isAdmin = hasPermission('orders:view_all');
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [period, setPeriod] = useState<Period>('day');
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [branchFilter, setBranchFilter] = useState<number | 'all'>('all');
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    const res = await apiFetch(token, '/shifts');
+    const qs = activeBranchId ? `?branchId=${activeBranchId}` : '';
+    const res = await apiFetch(token, `/shifts${qs}`);
     if (res.ok) setShifts(await res.json());
     setLoading(false);
-  }, [token]);
+  }, [token, activeBranchId]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Branches únicas para filtro admin
-  const branches = isAdmin
-    ? Array.from(new Map(shifts.map(s => [s.branch.id, s.branch])).values())
-    : [];
 
   // Turnos abiertos siempre visibles (sin importar periodo), cerrados filtrados por periodo
   const periodShifts = shifts.filter(s =>
@@ -346,7 +343,6 @@ export default function ShiftsPage() {
   const filtered = periodShifts.filter(s => {
     if (filter === 'open'   && s.status !== 'open')   return false;
     if (filter === 'closed' && s.status !== 'closed') return false;
-    if (isAdmin && branchFilter !== 'all' && s.branch.id !== branchFilter) return false;
     return true;
   });
 
@@ -369,18 +365,6 @@ export default function ShiftsPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <PeriodFilter value={period} onChange={setPeriod} />
-          {isAdmin && branches.length > 1 && (
-            <select
-              value={branchFilter}
-              onChange={e => setBranchFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">Todas las sucursales</option>
-              {branches.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-          )}
           <button onClick={load}
             className="text-sm text-slate-400 hover:text-white hover:bg-slate-700 px-3 py-2 rounded-xl transition">
             ↻

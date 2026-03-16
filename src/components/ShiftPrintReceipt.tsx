@@ -48,8 +48,9 @@ function pad(left: string, right: string, width = 32) {
   return left + ' '.repeat(Math.max(1, gap)) + right;
 }
 
-export default function ShiftPrintReceipt({ data, orgName }: { data: ShiftReportData; orgName: string }) {
+export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: { data: ShiftReportData; orgName: string; currency?: string }) {
   const s = data.shift;
+  const cur = currency;
   return (
     <div id="thermal-print-area" style={{
       fontFamily: "'Courier New', Courier, monospace",
@@ -91,7 +92,7 @@ export default function ShiftPrintReceipt({ data, orgName }: { data: ShiftReport
         {data.products.map((p, i) => (
           <div key={i}>
             <div style={{ fontWeight: 'bold' }}>{p.name}</div>
-            <div>{pad(`  Bs.${p.unitPrice.toFixed(2)} c/u`, `${p.totalQty}x  Bs.${p.totalSubtotal.toFixed(2)}`)}</div>
+            <div>{pad(`  ${cur}${p.unitPrice.toFixed(2)} c/u`, `${p.totalQty}x  ${cur}${p.totalSubtotal.toFixed(2)}`)}</div>
           </div>
         ))}
       </div>
@@ -101,9 +102,9 @@ export default function ShiftPrintReceipt({ data, orgName }: { data: ShiftReport
       {/* Métodos de pago */}
       <div style={{ fontSize: '11px' }}>
         <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>MÉTODOS DE PAGO</div>
-        {data.cashSales     > 0 && <div>{pad('  Efectivo:', `Bs. ${data.cashSales.toFixed(2)}`)}</div>}
-        {data.cardSales     > 0 && <div>{pad('  Tarjeta:', `Bs. ${data.cardSales.toFixed(2)}`)}</div>}
-        {data.transferSales > 0 && <div>{pad('  Transferencia:', `Bs. ${data.transferSales.toFixed(2)}`)}</div>}
+        {data.cashSales     > 0 && <div>{pad('  Efectivo:', `${cur} ${data.cashSales.toFixed(2)}`)}</div>}
+        {data.cardSales     > 0 && <div>{pad('  Tarjeta:', `${cur} ${data.cardSales.toFixed(2)}`)}</div>}
+        {data.transferSales > 0 && <div>{pad('  Transferencia:', `${cur} ${data.transferSales.toFixed(2)}`)}</div>}
       </div>
 
       <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
@@ -112,7 +113,7 @@ export default function ShiftPrintReceipt({ data, orgName }: { data: ShiftReport
       <div style={{ fontSize: '12px' }}>
         <div>{pad('Total pedidos:', `${data.totalOrders}`)}</div>
         <div style={{ fontWeight: 'bold', fontSize: '14px', marginTop: '2px' }}>
-          {pad('TOTAL VENTAS:', `Bs. ${data.totalSales.toFixed(2)}`)}
+          {pad('TOTAL VENTAS:', `${cur} ${data.totalSales.toFixed(2)}`)}
         </div>
       </div>
 
@@ -122,13 +123,13 @@ export default function ShiftPrintReceipt({ data, orgName }: { data: ShiftReport
           <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
           <div style={{ fontSize: '11px' }}>
             <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>ARQUEO DE CAJA</div>
-            <div>{pad('  Efectivo inicial:', `Bs. ${Number(s.openingAmount).toFixed(2)}`)}</div>
-            <div>{pad('  Ventas efectivo:', `Bs. ${data.cashSales.toFixed(2)}`)}</div>
-            <div>{pad('  Esperado en caja:', `Bs. ${data.expectedCash.toFixed(2)}`)}</div>
-            {data.closingAmount !== null && <div>{pad('  Contado:', `Bs. ${data.closingAmount.toFixed(2)}`)}</div>}
+            <div>{pad('  Efectivo inicial:', `${cur} ${Number(s.openingAmount).toFixed(2)}`)}</div>
+            <div>{pad('  Ventas efectivo:', `${cur} ${data.cashSales.toFixed(2)}`)}</div>
+            <div>{pad('  Esperado en caja:', `${cur} ${data.expectedCash.toFixed(2)}`)}</div>
+            {data.closingAmount !== null && <div>{pad('  Contado:', `${cur} ${data.closingAmount.toFixed(2)}`)}</div>}
             {data.difference !== null && (
               <div style={{ fontWeight: 'bold' }}>
-                {pad('  Diferencia:', `${data.difference >= 0 ? '+' : ''}Bs. ${data.difference.toFixed(2)}`)}
+                {pad('  Diferencia:', `${data.difference >= 0 ? '+' : ''}${cur} ${data.difference.toFixed(2)}`)}
               </div>
             )}
           </div>

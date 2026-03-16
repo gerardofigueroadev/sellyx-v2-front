@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { CartItem } from '../types';
+import { useAuth } from '../context/AuthContext';
 
-export type PaymentMethod = 'cash' | 'transfer';
+export type PaymentMethod = 'cash' | 'card' | 'transfer';
+
+const PAYMENT_OPTIONS: { key: PaymentMethod; emoji: string; label: string; checkoutLabel: string }[] = [
+  { key: 'cash',     emoji: '💵', label: 'Efectivo',          checkoutLabel: '💵 Cobrar en efectivo' },
+  { key: 'card',     emoji: '💳', label: 'Tarjeta',           checkoutLabel: '💳 Cobrar con tarjeta' },
+  { key: 'transfer', emoji: '📱', label: 'QR / Transferencia', checkoutLabel: '📱 Cobrar con QR' },
+];
 
 interface CartProps {
   items: CartItem[];
@@ -13,11 +20,23 @@ interface CartProps {
 }
 
 export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes }: CartProps) {
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const { currency, enabledPaymentMethods } = useAuth();
   const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
+
+  const visibleOptions = PAYMENT_OPTIONS.filter(o => enabledPaymentMethods.includes(o.key));
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() =>
+    visibleOptions[0]?.key ?? 'cash'
+  );
+
+  // If current selection was disabled, reset to first available
+  const activeMethod = visibleOptions.find(o => o.key === paymentMethod)
+    ? paymentMethod
+    : (visibleOptions[0]?.key ?? 'cash');
 
   const total      = items.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
   const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
+
+  const gridCols = visibleOptions.length === 1 ? '' : visibleOptions.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
 
   return (
     <div className="w-full lg:w-64 xl:w-80 2xl:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-700/50 flex flex-col shrink-0 max-h-[40vh] lg:max-h-none overflow-hidden">
@@ -54,7 +73,7 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
                 <span className="text-2xl shrink-0">{item.emoji || '🍽️'}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-medium truncate">{item.name}</p>
-                  <p className="text-blue-400 text-xs">Bs. {Number(item.price).toFixed(2)} × {item.quantity}</p>
+                  <p className="text-blue-400 text-xs">{currency} {Number(item.price).toFixed(2)} × {item.quantity}</p>
                 </div>
                 {allowItemNotes && (
                   <button
@@ -98,47 +117,39 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
         {/* Total */}
         <div className="flex items-center justify-between">
           <span className="text-slate-400 text-sm">Total</span>
-          <span className="text-white font-bold text-lg">Bs. {total.toFixed(2)}</span>
+          <span className="text-white font-bold text-lg">{currency} {total.toFixed(2)}</span>
         </div>
 
-        {/* Método de pago */}
-        <div>
-          <p className="text-slate-500 text-xs mb-2">Método de pago</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setPaymentMethod('cash')}
-              className={`flex items-center justify-center gap-1.5 xl:flex-col xl:gap-1 py-2 xl:py-2.5 px-2 rounded-xl border text-xs font-medium transition ${
-                paymentMethod === 'cash'
-                  ? 'bg-blue-600/20 border-blue-500 text-blue-400'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
-              }`}
-            >
-              <span className="text-base xl:text-lg">💵</span>
-              <span>Efectivo</span>
-            </button>
-
-            <div className="relative">
-              <button
-                disabled
-                className="w-full flex items-center justify-center gap-1.5 xl:flex-col xl:gap-1 py-2 xl:py-2.5 px-2 rounded-xl border border-slate-700/50 bg-slate-800/40 text-slate-600 text-xs font-medium cursor-not-allowed"
-              >
-                <span className="text-base xl:text-lg opacity-50">📱</span>
-                <span>QR / Tigo</span>
-              </button>
-              <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-none">
-                PRONTO
-              </span>
+        {/* Método de pago — solo si hay más de uno activo */}
+        {visibleOptions.length > 1 && (
+          <div>
+            <p className="text-slate-500 text-xs mb-2">Método de pago</p>
+            <div className={`grid gap-2 ${gridCols}`}>
+              {visibleOptions.map(opt => (
+                <button
+                  key={opt.key}
+                  onClick={() => setPaymentMethod(opt.key)}
+                  className={`flex items-center justify-center gap-1.5 xl:flex-col xl:gap-1 py-2 xl:py-2.5 px-2 rounded-xl border text-xs font-medium transition ${
+                    activeMethod === opt.key
+                      ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
+                  }`}
+                >
+                  <span className="text-base xl:text-lg">{opt.emoji}</span>
+                  <span>{opt.label}</span>
+                </button>
+              ))}
             </div>
           </div>
-        </div>
+        )}
 
         {/* Cobrar */}
         <button
           disabled={items.length === 0}
-          onClick={() => onCheckout(paymentMethod)}
+          onClick={() => onCheckout(activeMethod)}
           className="w-full bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition shadow-lg hover:shadow-green-500/20"
         >
-          {paymentMethod === 'cash' ? '💵 Cobrar en efectivo' : '📱 Cobrar con QR'}
+          {visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar'}
         </button>
       </div>
     </div>

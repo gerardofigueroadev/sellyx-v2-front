@@ -11,6 +11,7 @@ export interface OrderTicketData {
   orgName: string;
   cashierName?: string;
   createdAt: string;
+  currency?: string;
 }
 
 const PAY_LABEL: Record<string, string> = {
@@ -22,7 +23,7 @@ function pad(left: string, right: string, width = 32) {
   return left + ' '.repeat(Math.max(1, gap)) + right;
 }
 
-function ClientTicket({ d }: { d: OrderTicketData }) {
+function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
   return (
     <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '12px', width: '302px', lineHeight: '1.4', color: '#000' }}>
       {/* Header */}
@@ -52,7 +53,7 @@ function ClientTicket({ d }: { d: OrderTicketData }) {
         {d.items.map((item, i) => (
           <div key={i} style={{ marginBottom: '2px' }}>
             <div style={{ fontWeight: 'bold' }}>{item.name}</div>
-            <div>{pad(`  Bs.${item.unitPrice.toFixed(2)} c/u`, `${item.quantity}x  Bs.${item.subtotal.toFixed(2)}`)}</div>
+            <div>{pad(`  ${cur}${item.unitPrice.toFixed(2)} c/u`, `${item.quantity}x  ${cur}${item.subtotal.toFixed(2)}`)}</div>
           </div>
         ))}
       </div>
@@ -61,7 +62,7 @@ function ClientTicket({ d }: { d: OrderTicketData }) {
 
       {/* Total */}
       <div style={{ fontWeight: 'bold', fontSize: '14px', textAlign: 'center' }}>
-        {pad('TOTAL:', `Bs. ${d.total.toFixed(2)}`)}
+        {pad('TOTAL:', `${cur} ${d.total.toFixed(2)}`)}
       </div>
 
       {d.notes && (
@@ -119,10 +120,11 @@ function KitchenTicket({ d }: { d: OrderTicketData }) {
 
 // Componente principal: cliente arriba, línea de corte, cocina abajo
 export default function OrderTicket({ data }: { data: OrderTicketData }) {
+  const cur = data.currency ?? 'Bs.';
   return (
     <div id="thermal-print-area">
       {/* Ticket cliente */}
-      <ClientTicket d={data} />
+      <ClientTicket d={data} cur={cur} />
 
       {/* Línea de corte */}
       <div style={{

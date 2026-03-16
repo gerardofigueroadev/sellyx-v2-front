@@ -41,15 +41,16 @@ function elapsed(dateStr: string) {
   return `${m} min`;
 }
 
-function urgencyStyle(dateStr: string) {
+function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   const m = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
-  if (m < 5)  return { card: 'border-green-500/30 bg-green-500/5',  badge: 'bg-green-500/20 text-green-400',  dot: 'bg-green-400' };
-  if (m < 15) return { card: 'border-amber-500/40 bg-amber-500/5',  badge: 'bg-amber-500/20 text-amber-400',  dot: 'bg-amber-400 animate-pulse' };
-  return       { card: 'border-red-500/40 bg-red-500/5',            badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
+  if (m < warningMins) return { card: 'border-green-500/30 bg-green-500/5',  badge: 'bg-green-500/20 text-green-400',  dot: 'bg-green-400' };
+  if (m < dangerMins)  return { card: 'border-amber-500/40 bg-amber-500/5',  badge: 'bg-amber-500/20 text-amber-400',  dot: 'bg-amber-400 animate-pulse' };
+  return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ token, refreshKey, onComplete, branchId }: {
+function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
+  warningMins: number; dangerMins: number;
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [completing, setCompleting] = useState<number | null>(null);
@@ -119,7 +120,7 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId }: {
           </div>
         ) : (
           orders.map(order => {
-            const style = urgencyStyle(order.createdAt);
+            const style = urgencyStyle(order.createdAt, warningMins, dangerMins);
             return (
               <div key={order.id}
                 className={`shrink-0 w-36 xl:w-44 rounded-lg border px-2 xl:px-2.5 py-1.5 xl:py-2 flex flex-col gap-1 xl:gap-1.5 ${style.card}`}>
@@ -174,6 +175,7 @@ function OpenShiftModal({ onConfirm, onClose }: {
   onConfirm: (amount: number, notes: string) => void;
   onClose: () => void;
 }) {
+  const { currency } = useAuth();
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
   return (
@@ -188,7 +190,7 @@ function OpenShiftModal({ onConfirm, onClose }: {
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto inicial en caja (Bs.)</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto inicial en caja ({currency})</label>
             <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
               placeholder="0.00" autoFocus
               className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-lg font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -219,6 +221,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
   onConfirm: (amount: number, notes: string, cancelPending: boolean) => Promise<void>;
   onClose: () => void;
 }) {
+  const { currency } = useAuth();
   const [step, setStep]           = useState<'amount' | 'warning'>('amount');
   const [amount, setAmount]       = useState('');
   const [notes, setNotes]         = useState('');
@@ -255,7 +258,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
           </div>
           <div className="p-6 space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto contado en caja (Bs.)</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto contado en caja ({currency})</label>
               <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
                 placeholder="0.00" autoFocus
                 className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-lg font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -290,7 +293,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
               <div key={o.ticketNumber} className="flex items-center justify-between bg-slate-700/40 rounded-lg px-3 py-2 text-sm">
                 <span className="text-white font-bold">#{o.ticketNumber}</span>
                 <span className="text-slate-400">{o.itemCount} item(s)</span>
-                <span className="text-amber-400 font-medium">Bs. {Number(o.total).toFixed(2)}</span>
+                <span className="text-amber-400 font-medium">{currency} {Number(o.total).toFixed(2)}</span>
               </div>
             ))}
           </div>
@@ -316,7 +319,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
 
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { token, user, hasPermission, activeBranchId } = useAuth();
+  const { token, user, hasPermission, activeBranchId, currency } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [categories, setCategories] = useState<ApiCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -336,6 +339,9 @@ export default function HomePage() {
   const [printTicket,  setPrintTicket]      = useState<OrderTicketData | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>({});
   const [mobileCatId,  setMobileCatId]      = useState<number | null>(null);
+  const [layoutMode,   setLayoutMode]       = useState<'grid' | 'columns'>(() =>
+    (localStorage.getItem('pos_layout') as 'grid' | 'columns') ?? 'grid'
+  );
 
   // useEffect garantiza que el div ya está en el DOM antes de imprimir
   useEffect(() => {
@@ -474,7 +480,7 @@ export default function HomePage() {
     if (res.ok) {
       const order = await res.json();
       const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
-      setCheckoutMsg(`✅ Venta registrada — Bs. ${total.toFixed(2)}`);
+      setCheckoutMsg(`✅ Venta registrada — ${currency} ${total.toFixed(2)}`);
       setCartItems([]);
       setKitchenKey(k => k + 1);
 
@@ -497,6 +503,7 @@ export default function HomePage() {
           orgName,
           cashierName: (user as any)?.name,
           createdAt:   order.createdAt ?? new Date().toISOString(),
+          currency,
         });
       }
     } else {
@@ -515,7 +522,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Auto-print on shift close */}
-      {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} />}
+      {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} currency={currency} />}
       {/* Auto-print double ticket on order */}
       {printTicket && <OrderTicket data={printTicket} />}
 
@@ -594,9 +601,9 @@ export default function HomePage() {
         {/* ── Área de productos ── */}
         <div style={{ flex: '1 1 0%', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-          {/* Filtro de categorías */}
+          {/* Filtro de categorías + toggle de layout */}
           {!loading && categories.length > 0 && (
-            <div style={{ flexShrink: 0, display: 'flex', gap: 6, padding: '8px 10px 0', overflowX: 'auto', scrollbarWidth: 'none' }}>
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px 0', overflowX: 'auto', scrollbarWidth: 'none' }}>
               <button
                 onClick={() => setMobileCatId(null)}
                 style={{
@@ -627,10 +634,42 @@ export default function HomePage() {
                   {cat.name}
                 </button>
               ))}
+
+              {/* Toggle layout */}
+              <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', background: 'rgb(15,23,42)', borderRadius: 8, padding: 3, gap: 2, border: '1px solid rgba(71,85,105,0.4)' }}>
+                <button
+                  onClick={() => { setLayoutMode('grid'); localStorage.setItem('pos_layout', 'grid'); }}
+                  title="Vista en filas"
+                  style={{
+                    padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                    background: layoutMode === 'grid' ? '#3b82f6' : 'transparent',
+                    color: layoutMode === 'grid' ? 'white' : '#64748b',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => { setLayoutMode('columns'); localStorage.setItem('pos_layout', 'columns'); }}
+                  title="Vista en columnas"
+                  style={{
+                    padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                    background: layoutMode === 'columns' ? '#3b82f6' : 'transparent',
+                    color: layoutMode === 'columns' ? 'white' : '#64748b',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="8" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="16" y2="21"/>
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  </svg>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Filas por categoría */}
+          {/* Productos */}
           <div style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             {loading ? (
               [1, 2, 3].map(n => (
@@ -648,14 +687,45 @@ export default function HomePage() {
                 <span style={{ fontSize: 48 }}>🗂️</span>
                 <p style={{ fontWeight: 600, color: '#94a3b8' }}>No hay categorías configuradas</p>
               </div>
+            ) : layoutMode === 'columns' ? (
+              /* ── Vista columnas: una columna por categoría en grid horizontal ── */
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${
+                  (mobileCatId === null ? categories : categories.filter(c => c.id === mobileCatId)).length
+                }, minmax(160px, 1fr))`,
+                gap: 10, alignItems: 'start',
+              }}>
+                {categories
+                  .filter(cat => mobileCatId === null || cat.id === mobileCatId)
+                  .map(cat => {
+                    const catProducts = products.filter(p => p.category?.id === cat.id);
+                    return (
+                      <div key={cat.id} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <div className={`${getGradient(cat.color)} flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm`}>
+                          <span style={{ fontSize: 16 }}>{cat.emoji || '🍽️'}</span>
+                          <span className="text-white font-bold text-xs">{cat.name}</span>
+                          <span className="text-white/60 text-xs ml-auto">{catProducts.filter(p => p.isAvailable).length}/{catProducts.length}</span>
+                        </div>
+                        {catProducts.map(p => (
+                          <ProductCard
+                            key={p.id} product={p} onAdd={handleAdd}
+                            quantity={cartItems.find(i => i.id === p.id)?.quantity ?? 0}
+                            categoryColor={cat.color}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
+              </div>
             ) : (
+              /* ── Vista grid: secciones por categoría en filas ── */
               categories
                 .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                 .map(cat => {
                 const catProducts = products.filter(p => p.category?.id === cat.id);
                 return (
                   <div key={cat.id}>
-                    {/* Header de categoría */}
                     <div className={`${getGradient(cat.color)} flex items-center gap-2 px-4 py-2 rounded-xl mb-2.5 shadow-sm`}
                       style={{ display: 'inline-flex' }}>
                       <span style={{ fontSize: 18 }}>{cat.emoji || '🍽️'}</span>
@@ -664,13 +734,10 @@ export default function HomePage() {
                         {catProducts.filter(p => p.isAvailable).length}/{catProducts.length}
                       </span>
                     </div>
-                    {/* Grid de productos de esta categoría */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 6 }}>
                       {catProducts.map(p => (
                         <ProductCard
-                          key={p.id}
-                          product={p}
-                          onAdd={handleAdd}
+                          key={p.id} product={p} onAdd={handleAdd}
                           quantity={cartItems.find(i => i.id === p.id)?.quantity ?? 0}
                           categoryColor={cat.color}
                         />
@@ -689,6 +756,8 @@ export default function HomePage() {
               refreshKey={kitchenKey}
               onComplete={() => setKitchenKey(k => k + 1)}
               branchId={activeBranchId}
+              warningMins={Number(orgSettings.kitchenWarningMins ?? 5)}
+              dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
             />
           )}
         </div>

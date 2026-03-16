@@ -869,7 +869,7 @@ function TabPermisos({ allPermissions, loading, roles, rolesLoading }: { allPerm
 }
 
 // ─── Tab Flags ────────────────────────────────────────────────────────────────
-interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; [key: string]: any; }
+interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
 
 function FlagToggle({ label, description, value, onChange, saving }: {
   label: string; description: string; value: boolean;
@@ -896,30 +896,56 @@ function FlagToggle({ label, description, value, onChange, saving }: {
   );
 }
 
+const CURRENCY_PRESETS = ['Bs.', '$', 'S/.', 'COP', 'MXN', 'Q', '€', '£'];
+
+const PAYMENT_OPTIONS: { key: string; emoji: string; label: string }[] = [
+  { key: 'cash',     emoji: '💵', label: 'Efectivo' },
+  { key: 'card',     emoji: '💳', label: 'Tarjeta' },
+  { key: 'transfer', emoji: '📱', label: 'QR / Transferencia' },
+];
+
 function TabFlags({ token }: { token: string }) {
+  const { refreshOrgSettings } = useAuth();
   const [settings, setSettings] = useState<OrgSettings>({});
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [toast,    setToast]    = useState('');
+  const [currencyInput, setCurrencyInput] = useState('Bs.');
 
   useEffect(() => {
     apiFetch(token, '/organizations/my/settings')
       .then(r => r.json())
-      .then(setSettings)
+      .then((s: OrgSettings) => { setSettings(s); setCurrencyInput(s.currency ?? 'Bs.'); })
       .finally(() => setLoading(false));
   }, [token]);
 
-  const toggle = async (key: keyof OrgSettings, value: boolean) => {
+  const saveSettings = async (patch: Partial<OrgSettings>, label = 'Configuración guardada') => {
     setSaving(true);
-    const updated = { ...settings, [key]: value };
-    setSettings(updated);
+    const prev = settings;
+    setSettings(s => ({ ...s, ...patch }));
     const res = await apiFetch(token, '/organizations/my/settings', {
       method: 'PATCH',
-      body: JSON.stringify({ [key]: value }),
+      body: JSON.stringify(patch),
     });
-    if (res.ok) setToast('Configuración guardada');
-    else { setSettings(settings); setToast('⚠️ Error al guardar'); }
+    if (res.ok) { setToast(label); await refreshOrgSettings(); }
+    else { setSettings(prev); setToast('⚠️ Error al guardar'); }
     setSaving(false);
+  };
+
+  const toggle = (key: keyof OrgSettings, value: boolean) => saveSettings({ [key]: value });
+
+  const saveCurrency = () => {
+    const c = currencyInput.trim();
+    if (!c) return;
+    saveSettings({ currency: c }, `Moneda cambiada a "${c}"`);
+  };
+
+  const togglePaymentMethod = (key: string) => {
+    const current: string[] = settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer'];
+    const isEnabled = current.includes(key);
+    if (isEnabled && current.length === 1) { setToast('⚠️ Debes tener al menos un método activo'); return; }
+    const updated = isEnabled ? current.filter(k => k !== key) : [...current, key];
+    saveSettings({ enabledPaymentMethods: updated });
   };
 
   if (loading) return (
@@ -928,10 +954,92 @@ function TabFlags({ token }: { token: string }) {
     </div>
   );
 
+  const saveTimings = (warning: number, danger: number) => {
+    if (warning < 1 || danger < 1 || warning >= danger) return;
+    saveSettings({ kitchenWarningMins: warning, kitchenDangerMins: danger }, 'Tiempos guardados');
+  };
+
   return (
-    <div>
+    <div className="space-y-5">
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
-      <p className="text-slate-400 text-sm mb-5">Activa o desactiva comportamientos automáticos del sistema.</p>
+      <p className="text-slate-400 text-sm">Activa o desactiva comportamientos automáticos del sistema.</p>
+
+      {/* Moneda + Métodos de pago — side by side en pantallas medianas */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+        {/* Moneda */}
+        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">💱</span>
+            <div>
+              <p className="text-white font-semibold text-sm">Símbolo de moneda</p>
+              <p className="text-slate-500 text-xs mt-0.5">Se muestra en precios, totales, tickets y reportes</p>
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {CURRENCY_PRESETS.map(p => (
+              <button key={p} onClick={() => setCurrencyInput(p)}
+                className={`px-3 py-1.5 rounded-xl text-sm font-mono font-semibold border transition ${
+                  currencyInput === p
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                    : 'bg-slate-700/50 border-slate-600 text-slate-400 hover:border-slate-500'
+                }`}>
+                {p}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={currencyInput}
+              onChange={e => setCurrencyInput(e.target.value)}
+              placeholder="Ej: Bs., $, S/."
+              maxLength={6}
+              className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+            />
+            <button
+              onClick={saveCurrency}
+              disabled={saving || !currencyInput.trim() || currencyInput.trim() === (settings.currency ?? 'Bs.')}
+              className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed"
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+
+        {/* Métodos de pago */}
+        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">💳</span>
+            <div>
+              <p className="text-white font-semibold text-sm">Métodos de pago habilitados</p>
+              <p className="text-slate-500 text-xs mt-0.5">Solo los métodos activos aparecen al cobrar en el POS</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {PAYMENT_OPTIONS.map(({ key, emoji, label }) => {
+              const enabled = (settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer']).includes(key);
+              const isLast  = (settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer']).length === 1 && enabled;
+              return (
+                <div key={key} className="flex items-center justify-between py-2 border-t border-slate-700/40 first:border-t-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{emoji}</span>
+                    <span className="text-white text-sm">{label}</span>
+                    {isLast && <span className="text-amber-400 text-xs">(último activo)</span>}
+                  </div>
+                  <button
+                    onClick={() => togglePaymentMethod(key)}
+                    disabled={saving || isLast}
+                    className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${enabled ? 'bg-blue-600' : 'bg-slate-600'}`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
 
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl px-5">
         <FlagToggle
@@ -962,7 +1070,107 @@ function TabFlags({ token }: { token: string }) {
           onChange={v => toggle('showKitchenStrip', v)}
           saving={saving}
         />
+        <FlagToggle
+          label="Permitir anulaciones de ventas"
+          description="Habilita que usuarios con permiso orders:void puedan anular ventas completadas. La anulación requiere motivo obligatorio y queda registrada con auditoría."
+          value={!!settings.allowVoids}
+          onChange={v => toggle('allowVoids', v)}
+          saving={saving}
+        />
       </div>
+
+      {/* Tiempos de alerta en cola de cocina */}
+      <KitchenTimingCard
+        warningMins={settings.kitchenWarningMins ?? 5}
+        dangerMins={settings.kitchenDangerMins ?? 15}
+        saving={saving}
+        onSave={saveTimings}
+      />
+    </div>
+  );
+}
+
+function KitchenTimingCard({ warningMins, dangerMins, saving, onSave }: {
+  warningMins: number; dangerMins: number; saving: boolean;
+  onSave: (warning: number, danger: number) => void;
+}) {
+  const [warning, setWarning] = useState(warningMins);
+  const [danger,  setDanger]  = useState(dangerMins);
+
+  // Sync cuando llegan los valores reales del servidor
+  useEffect(() => { setWarning(warningMins); }, [warningMins]);
+  useEffect(() => { setDanger(dangerMins); },  [dangerMins]);
+
+  const warningErr = warning < 1 ? 'Mínimo 1 minuto' : warning >= danger ? 'Debe ser menor que el tiempo rojo' : '';
+  const dangerErr  = danger  < 1 ? 'Mínimo 1 minuto' : danger <= warning ? 'Debe ser mayor que el tiempo amarillo' : '';
+  const canSave = !warningErr && !dangerErr && (warning !== warningMins || danger !== dangerMins);
+
+  return (
+    <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5">
+      <div className="flex items-center gap-3 mb-4">
+        <span className="text-2xl">🍳</span>
+        <div>
+          <p className="text-white font-semibold text-sm">Tiempos de alerta en cola de cocina</p>
+          <p className="text-slate-500 text-xs mt-0.5">Cuántos minutos tarda un pedido en cambiar de color en la franja de cocina</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        {/* Verde */}
+        <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 text-center">
+          <span className="text-green-400 text-lg">🟢</span>
+          <p className="text-green-400 text-xs font-semibold mt-1">Tranquilo</p>
+          <p className="text-slate-400 text-xs mt-0.5">0 — {warning - 1} min</p>
+        </div>
+        {/* Amarillo */}
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-center">
+          <span className="text-amber-400 text-lg">🟡</span>
+          <p className="text-amber-400 text-xs font-semibold mt-1">Apurando</p>
+          <p className="text-slate-400 text-xs mt-0.5">{warning} — {danger - 1} min</p>
+        </div>
+        {/* Rojo */}
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center">
+          <span className="text-red-400 text-lg">🔴</span>
+          <p className="text-red-400 text-xs font-semibold mt-1">Urgente</p>
+          <p className="text-slate-400 text-xs mt-0.5">{danger}+ min</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="block text-xs font-medium text-amber-400 mb-1.5">🟡 Cambia a amarillo después de</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={1} max={danger - 1} value={warning}
+              onChange={e => setWarning(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-full bg-slate-700/60 border border-slate-600 focus:border-amber-500/60 rounded-xl px-3 py-2 text-white text-sm focus:outline-none"
+            />
+            <span className="text-slate-400 text-sm shrink-0">min</span>
+          </div>
+          {warningErr && <p className="text-red-400 text-xs mt-1">{warningErr}</p>}
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-red-400 mb-1.5">🔴 Cambia a rojo después de</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={warning + 1} value={danger}
+              onChange={e => setDanger(Math.max(warning + 1, parseInt(e.target.value) || warning + 1))}
+              className="w-full bg-slate-700/60 border border-slate-600 focus:border-red-500/60 rounded-xl px-3 py-2 text-white text-sm focus:outline-none"
+            />
+            <span className="text-slate-400 text-sm shrink-0">min</span>
+          </div>
+          {dangerErr && <p className="text-red-400 text-xs mt-1">{dangerErr}</p>}
+        </div>
+      </div>
+
+      <button
+        onClick={() => onSave(warning, danger)}
+        disabled={!canSave || saving}
+        className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed flex items-center gap-2"
+      >
+        {saving && <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full inline-block" />}
+        Guardar tiempos
+      </button>
     </div>
   );
 }

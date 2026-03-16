@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApiProduct } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface ProductCardProps {
   product: ApiProduct;
@@ -23,6 +24,7 @@ const BG_MAP: Record<string, string> = {
 };
 
 export default function ProductCard({ product, onAdd, quantity = 0, categoryColor }: ProductCardProps) {
+  const { currency } = useAuth();
   const [flash, setFlash] = useState(false);
   const accent = categoryColor ? (COLOR_MAP[categoryColor] ?? '#3b82f6') : undefined;
   const bgTint  = categoryColor ? (BG_MAP[categoryColor]  ?? 'transparent') : 'transparent';
@@ -87,7 +89,7 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
           color: product.isAvailable ? '#60a5fa' : '#475569',
           margin: '4px 0 0',
         }}>
-          Bs. {Number(product.price).toFixed(2)}
+          {currency} {Number(product.price).toFixed(2)}
         </p>
       </div>
 

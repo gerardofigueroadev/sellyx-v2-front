@@ -10,7 +10,7 @@ const apiFetch = (token: string, path: string, opts?: RequestInit) =>
   });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type OrderStatus = 'pending' | 'completed' | 'cancelled';
+type OrderStatus = 'pending' | 'completed' | 'cancelled' | 'voided';
 type OrderChannel = 'pos' | 'chatbot' | 'web';
 
 interface OrderItem {
@@ -30,6 +30,9 @@ interface Order {
   channel: OrderChannel;
   total: number;
   notes: string | null;
+  voidReason: string | null;
+  voidedAt: string | null;
+  voidedBy: { id: number; name: string } | null;
   createdAt: string;
   branch: { id: number; name: string } | null;
   user: { id: number; name: string } | null;
@@ -42,12 +45,14 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   pending:   'Pendiente',
   completed: 'Completado',
   cancelled: 'Cancelado',
+  voided:    'Anulado',
 };
 
 const STATUS_STYLE: Record<OrderStatus, string> = {
   pending:   'bg-amber-500/15 text-amber-400 border-amber-500/20',
   completed: 'bg-green-500/15 text-green-400 border-green-500/20',
   cancelled: 'bg-red-500/15 text-red-400 border-red-500/20',
+  voided:    'bg-orange-500/15 text-orange-400 border-orange-500/20',
 };
 
 const CHANNEL_LABEL: Record<OrderChannel, string> = {
@@ -78,16 +83,36 @@ function formatTime(dateStr: string) {
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 function OrderDetailModal({
-  order, token, onClose, onUpdated, isAdmin,
+  order, token, onClose, onUpdated, isAdmin, canVoid, currency,
 }: {
-  order: Order; token: string; onClose: () => void; onUpdated: (o: Order) => void; isAdmin: boolean;
+  order: Order; token: string; onClose: () => void; onUpdated: (o: Order) => void; isAdmin: boolean; canVoid: boolean; currency: string;
 }) {
   const [loading, setLoading] = useState(false);
+  const [showVoidForm, setShowVoidForm] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidError, setVoidError] = useState('');
 
   const action = async (act: 'complete' | 'cancel') => {
     setLoading(true);
     const res = await apiFetch(token, `/orders/${order.id}/${act}`, { method: 'PATCH' });
     if (res.ok) onUpdated(await res.json());
+    setLoading(false);
+  };
+
+  const handleVoid = async () => {
+    if (!voidReason.trim()) { setVoidError('El motivo es obligatorio'); return; }
+    setLoading(true); setVoidError('');
+    const res = await apiFetch(token, `/orders/${order.id}/void`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason: voidReason.trim() }),
+    });
+    if (res.ok) {
+      onUpdated(await res.json());
+      setShowVoidForm(false);
+    } else {
+      const data = await res.json();
+      setVoidError(data.message ?? 'Error al anular');
+    }
     setLoading(false);
   };
 
@@ -121,9 +146,9 @@ function OrderDetailModal({
               <span className="text-2xl shrink-0">{item.product.emoji || '🍽️'}</span>
               <div className="flex-1 min-w-0">
                 <p className="text-white text-sm font-medium truncate">{item.product.name}</p>
-                <p className="text-slate-400 text-xs">Bs. {Number(item.unitPrice).toFixed(2)} × {item.quantity}</p>
+                <p className="text-slate-400 text-xs">{currency} {Number(item.unitPrice).toFixed(2)} × {item.quantity}</p>
               </div>
-              <p className="text-white text-sm font-semibold shrink-0">Bs. {Number(item.subtotal).toFixed(2)}</p>
+              <p className="text-white text-sm font-semibold shrink-0">{currency} {Number(item.subtotal).toFixed(2)}</p>
             </div>
           ))}
         </div>
@@ -152,9 +177,22 @@ function OrderDetailModal({
               <span className="text-slate-300 text-right max-w-[60%]">{order.notes}</span>
             </div>
           )}
+
+          {/* Void info */}
+          {order.status === 'voided' && (
+            <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3 space-y-1">
+              <p className="text-orange-400 text-xs font-semibold uppercase tracking-wide">Venta anulada</p>
+              <p className="text-slate-300 text-sm">Motivo: {order.voidReason}</p>
+              {order.voidedBy && <p className="text-slate-500 text-xs">Por: {order.voidedBy.name}</p>}
+              {order.voidedAt && <p className="text-slate-500 text-xs">{new Date(order.voidedAt).toLocaleString('es-ES')}</p>}
+            </div>
+          )}
+
           <div className="flex items-center justify-between pt-1 border-t border-slate-700/50">
             <span className="text-slate-300 font-medium">Total</span>
-            <span className="text-white font-bold text-xl">Bs. {Number(order.total).toFixed(2)}</span>
+            <span className={`font-bold text-xl ${order.status === 'voided' ? 'text-slate-500 line-through' : 'text-white'}`}>
+              {currency} {Number(order.total).toFixed(2)}
+            </span>
           </div>
 
           {order.status === 'pending' && (
@@ -168,6 +206,41 @@ function OrderDetailModal({
                 {loading && <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full inline-block" />}
                 Completar
               </button>
+            </div>
+          )}
+
+          {/* Void form */}
+          {order.status === 'completed' && canVoid && (
+            <div className="pt-1">
+              {!showVoidForm ? (
+                <button onClick={() => setShowVoidForm(true)}
+                  className="w-full bg-slate-700/60 hover:bg-orange-500/20 border border-slate-600 hover:border-orange-500/40 text-slate-400 hover:text-orange-400 py-2.5 rounded-xl text-sm font-medium transition">
+                  Anular venta
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-orange-400 text-xs font-semibold">Motivo de anulación *</p>
+                  <textarea
+                    value={voidReason}
+                    onChange={e => { setVoidReason(e.target.value); setVoidError(''); }}
+                    placeholder="Ej: Error en el cobro, cliente solicitó devolución..."
+                    rows={2}
+                    className="w-full bg-slate-700/60 border border-slate-600 focus:border-orange-500/60 rounded-xl px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none resize-none"
+                  />
+                  {voidError && <p className="text-red-400 text-xs">{voidError}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={() => { setShowVoidForm(false); setVoidReason(''); setVoidError(''); }}
+                      className="flex-1 bg-slate-700 text-slate-400 py-2 rounded-xl text-sm transition hover:bg-slate-600">
+                      Cancelar
+                    </button>
+                    <button onClick={handleVoid} disabled={loading}
+                      className="flex-1 bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-xl text-sm font-bold transition disabled:opacity-50 flex items-center justify-center gap-2">
+                      {loading && <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full inline-block" />}
+                      Confirmar anulación
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -235,10 +308,11 @@ const STATUS_FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
   { key: 'pending',   label: 'Pendientes' },
   { key: 'completed', label: 'Completados' },
   { key: 'cancelled', label: 'Cancelados' },
+  { key: 'voided',    label: 'Anulados' },
 ];
 
 export default function OrdersPage() {
-  const { token, hasPermission } = useAuth();
+  const { token, hasPermission, activeBranchId, currency } = useAuth();
   const isAdmin = hasPermission('orders:view_all');
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,15 +320,15 @@ export default function OrdersPage() {
   const [period, setPeriod] = useState<Period>('day');
   const [selected, setSelected] = useState<Order | null>(null);
   const [search, setSearch] = useState('');
-  const [branchFilter, setBranchFilter] = useState<number | 'all'>('all');
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    const res = await apiFetch(token, '/orders');
+    const qs = activeBranchId ? `?branchId=${activeBranchId}` : '';
+    const res = await apiFetch(token, `/orders${qs}`);
     if (res.ok) setOrders(await res.json());
     setLoading(false);
-  }, [token]);
+  }, [token, activeBranchId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -267,15 +341,12 @@ export default function OrdersPage() {
   const periodOrders = orders.filter(o => inPeriod(o.createdAt, period));
 
   // Branches únicas para el filtro de admin
-  const branches = isAdmin
-    ? Array.from(new Map(orders.filter(o => o.branch).map(o => [o.branch!.id, o.branch!])).values())
-    : [];
 
   const filtered = periodOrders
     .filter(o => {
       const matchesFilter = filter === 'all' || o.status === filter;
       const matchesSearch = !search || o.orderNumber.toLowerCase().includes(search.toLowerCase());
-      const matchesBranch = !isAdmin || branchFilter === 'all' || o.branch?.id === branchFilter;
+      const matchesBranch = !activeBranchId || o.branch?.id === activeBranchId;
       return matchesFilter && matchesSearch && matchesBranch;
     })
     .sort((a, b) => b.ticketNumber - a.ticketNumber);
@@ -285,6 +356,7 @@ export default function OrdersPage() {
     pending:   periodOrders.filter(o => o.status === 'pending').length,
     completed: periodOrders.filter(o => o.status === 'completed').length,
     cancelled: periodOrders.filter(o => o.status === 'cancelled').length,
+    voided:    periodOrders.filter(o => o.status === 'voided').length,
   };
 
   const completedTotal = periodOrders
@@ -307,6 +379,8 @@ export default function OrdersPage() {
           onClose={() => setSelected(null)}
           onUpdated={handleUpdated}
           isAdmin={isAdmin}
+          canVoid={hasPermission('orders:void')}
+          currency={currency}
         />
       )}
 
@@ -315,23 +389,11 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-xl font-bold text-white">Pedidos</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            {loading ? 'Cargando...' : `${periodOrders.length} pedido(s) · Bs. ${completedTotal.toFixed(2)} completados`}
+            {loading ? 'Cargando...' : `${periodOrders.length} pedido(s) · ${currency} ${completedTotal.toFixed(2)} completados`}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <PeriodFilter value={period} onChange={setPeriod} />
-          {isAdmin && branches.length > 1 && (
-            <select
-              value={branchFilter}
-              onChange={e => setBranchFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">Todas las sucursales</option>
-              {branches.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-          )}
           <input
             value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Buscar por número..."
@@ -450,7 +512,7 @@ export default function OrdersPage() {
 
               {/* Total */}
               <div className="w-28 text-right">
-                <p className="text-white font-bold text-sm">Bs. {Number(order.total).toFixed(2)}</p>
+                <p className="text-white font-bold text-sm">{currency} {Number(order.total).toFixed(2)}</p>
                 <p className="text-slate-500 text-xs">{PAYMENT_LABEL[order.paymentMethod]}</p>
               </div>
 

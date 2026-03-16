@@ -18,6 +18,7 @@ interface Branch { id: number; name: string; }
 interface Summary {
   totalSales: number; totalOrders: number; avgTicket: number;
   cashSales: number; cardSales: number; transferSales: number;
+  voidedCount: number; voidedTotal: number;
 }
 interface HourRow  { hour: string; total: number; orders: number; }
 interface DayRow   { day: string;  total: number; orders: number; }
@@ -30,7 +31,7 @@ interface ShiftRow {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const bs = (n: number) => `Bs. ${n.toFixed(2)}`;
+const bs = (n: number, cur: string) => `${cur} ${n.toFixed(2)}`;
 const fmtDay = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
 const fmtDt  = (d: string) => new Date(d).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -58,6 +59,7 @@ function StatCard({ label, value, sub, color = 'blue' }: {
     green:  'bg-green-500/10 border-green-500/20 text-green-400',
     amber:  'bg-amber-500/10 border-amber-500/20 text-amber-400',
     purple: 'bg-purple-500/10 border-purple-500/20 text-purple-400',
+    red:    'bg-red-500/10 border-red-500/20 text-red-400',
   };
   return (
     <div className={`rounded-2xl border p-4 ${colors[color]}`}>
@@ -80,13 +82,14 @@ function ChartCard({ title, children, loading }: { title: string; children: Reac
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
+  const { currency } = useAuth();
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs shadow-xl">
       <p className="text-slate-400 mb-1">{label}</p>
       {payload.map((p: any) => (
         <p key={p.dataKey} style={{ color: p.color }} className="font-semibold">
-          {p.name}: {p.dataKey === 'total' ? bs(p.value) : p.value}
+          {p.name}: {p.dataKey === 'total' ? bs(p.value, currency) : p.value}
         </p>
       ))}
     </div>
@@ -149,6 +152,7 @@ function TabVentas({ token, params, loading }: {
 function TabProductos({ token, params, loading }: {
   token: string; params: string; loading: boolean;
 }) {
+  const { currency } = useAuth();
   const [data, setData] = useState<Product[]>([]);
   const [loadingLocal, setLoadingLocal] = useState(true);
 
@@ -200,7 +204,7 @@ function TabProductos({ token, params, loading }: {
                   <td className="px-4 py-2.5 text-slate-500 text-xs">{i + 1}</td>
                   <td className="px-4 py-2.5 text-white font-medium">{p.name}</td>
                   <td className="px-4 py-2.5 text-slate-300 text-right">{p.qty}</td>
-                  <td className="px-4 py-2.5 text-white font-semibold text-right">{bs(p.total)}</td>
+                  <td className="px-4 py-2.5 text-white font-semibold text-right">{bs(p.total, currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -215,6 +219,7 @@ function TabProductos({ token, params, loading }: {
 function TabTurnos({ token, params, loading }: {
   token: string; params: string; loading: boolean;
 }) {
+  const { currency } = useAuth();
   const [data, setData] = useState<ShiftRow[]>([]);
   const [loadingLocal, setLoadingLocal] = useState(true);
 
@@ -259,11 +264,11 @@ function TabTurnos({ token, params, loading }: {
               <td className="px-4 py-3 text-slate-300 text-xs">{fmtDt(s.openedAt)}</td>
               <td className="px-4 py-3 text-slate-300 text-xs">{s.closedAt ? fmtDt(s.closedAt) : <span className="text-green-400">Abierto</span>}</td>
               <td className="px-4 py-3 text-slate-300">{s.orders}</td>
-              <td className="px-4 py-3 text-white font-semibold">{bs(s.sales)}</td>
+              <td className="px-4 py-3 text-white font-semibold">{bs(s.sales, currency)}</td>
               <td className="px-4 py-3">
                 {s.difference === null ? <span className="text-slate-500">—</span> : (
                   <span className={`font-semibold text-xs ${s.difference === 0 ? 'text-green-400' : s.difference > 0 ? 'text-blue-400' : 'text-red-400'}`}>
-                    {s.difference >= 0 ? '+' : ''}{bs(s.difference)}
+                    {s.difference >= 0 ? '+' : ''}{bs(s.difference, currency)}
                   </span>
                 )}
               </td>
@@ -277,6 +282,7 @@ function TabTurnos({ token, params, loading }: {
 
 // ─── Tab: Pagos ────────────────────────────────────────────────────────────────
 function TabPagos({ summary, loading }: { summary: Summary | null; loading: boolean }) {
+  const { currency } = useAuth();
   if (loading || !summary) return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
       {[1,2].map(i => <div key={i} className="h-64 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />)}
@@ -307,7 +313,7 @@ function TabPagos({ summary, loading }: { summary: Summary | null; loading: bool
               {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
             </Pie>
             <Legend formatter={(v) => <span className="text-slate-300 text-xs">{v}</span>} />
-            <Tooltip formatter={(v) => bs(Number(v))} />
+            <Tooltip formatter={(v) => bs(Number(v), currency)} />
           </PieChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -321,14 +327,14 @@ function TabPagos({ summary, loading }: { summary: Summary | null; loading: bool
               <span className="text-slate-300 text-sm">{d.name}</span>
             </div>
             <div className="text-right">
-              <p className="text-white font-semibold text-sm">{bs(d.value)}</p>
+              <p className="text-white font-semibold text-sm">{bs(d.value, currency)}</p>
               <p className="text-slate-500 text-xs">{((d.value / total) * 100).toFixed(1)}%</p>
             </div>
           </div>
         ))}
         <div className="border-t border-slate-700/50 pt-3 flex justify-between">
           <span className="text-slate-400 text-sm font-medium">Total</span>
-          <span className="text-white font-bold">{bs(total)}</span>
+          <span className="text-white font-bold">{bs(total, currency)}</span>
         </div>
       </div>
     </div>
@@ -345,7 +351,7 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 export default function ReportsPage() {
-  const { token, hasPermission } = useAuth();
+  const { token, hasPermission, currency } = useAuth();
   const isAdmin = hasPermission('orders:view_all');
 
   const [from,      setFrom]      = useState(today());
@@ -425,15 +431,16 @@ export default function ReportsPage() {
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
         {/* Tarjetas resumen */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {loading ? (
-            [1,2,3,4].map(i => <div key={i} className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />)
+            [1,2,3,4,5].map(i => <div key={i} className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />)
           ) : summary ? (
             <>
-              <StatCard label="Ventas totales"  value={bs(summary.totalSales)}           sub={`${summary.totalOrders} órdenes`}  color="blue" />
-              <StatCard label="Ticket promedio" value={bs(summary.avgTicket)}            sub="por orden"                         color="green" />
-              <StatCard label="Efectivo"        value={bs(summary.cashSales)}            sub="método de pago"                    color="amber" />
-              <StatCard label="QR / Digital"    value={bs(summary.cardSales + summary.transferSales)} sub="tarjeta + transferencia" color="purple" />
+              <StatCard label="Ventas totales"  value={bs(summary.totalSales, currency)}           sub={`${summary.totalOrders} órdenes`}  color="blue" />
+              <StatCard label="Ticket promedio" value={bs(summary.avgTicket, currency)}            sub="por orden"                         color="green" />
+              <StatCard label="Efectivo"        value={bs(summary.cashSales, currency)}            sub="método de pago"                    color="amber" />
+              <StatCard label="QR / Digital"    value={bs(summary.cardSales + summary.transferSales, currency)} sub="tarjeta + transferencia" color="purple" />
+              <StatCard label="Anulaciones"     value={bs(summary.voidedTotal, currency)}          sub={`${summary.voidedCount} venta(s) anulada(s)`} color="red" />
             </>
           ) : null}
         </div>

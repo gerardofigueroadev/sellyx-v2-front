@@ -174,7 +174,7 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function ProductsPage() {
-  const { token, branches, activeBranchId } = useAuth();
+  const { token, branches, activeBranchId, currency } = useAuth();
   const isAdmin = branches.length > 1;
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -412,7 +412,7 @@ export default function ProductsPage() {
 
                 {/* Footer */}
                 <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-700/50">
-                  <span className="text-blue-400 font-bold text-base">Bs. {Number(p.price).toFixed(2)}</span>
+                  <span className="text-blue-400 font-bold text-base">{currency} {Number(p.price).toFixed(2)}</span>
                   <div className="flex items-center gap-1.5">
                     {/* Branch badge — only shown when admin with multiple branches */}
                     {isAdmin && (
@@ -479,9 +479,9 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 text-sm mb-1.5">Precio (Bs.) *</label>
+                <label className="block text-slate-400 text-sm mb-1.5">Precio ({currency}) *</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">Bs.</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">{currency}</span>
                   <input type="number" min="0" step="0.50" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
                     placeholder="0.00"
                     className="w-full bg-slate-700/60 border border-slate-600 rounded-xl pl-10 pr-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
