@@ -5,7 +5,8 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts';
 
-const API = 'http://localhost:3000/api';
+import API_URL from '../config';
+const API = `${API_URL}/api`;
 const apiFetch = (token: string, path: string) =>
   fetch(`${API}${path}`, {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

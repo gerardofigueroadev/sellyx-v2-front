@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-const API = 'http://localhost:3000/api';
+import API_URL from '../config';
+const API = `${API_URL}/api`;
 
 interface Category { id: number; name: string; emoji: string; color: string; }
 interface Branch { id: number; name: string; }

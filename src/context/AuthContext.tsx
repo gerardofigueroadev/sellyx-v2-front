@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import BASE_URL from '../config';
 
-const API_URL = 'http://localhost:3000/api';
+const API_URL = `${BASE_URL}/api`;
 
 export interface Branch {
   id: number;

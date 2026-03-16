@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 
-const API = 'http://localhost:3000/api';
+import API_URL from '../config';
+const API = `${API_URL}/api`;
 const apiFetch = (token: string, path: string, opts?: RequestInit) =>
   fetch(`${API}${path}`, {
     ...opts,
