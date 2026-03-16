@@ -22,7 +22,7 @@ const BG_MAP: Record<string, string> = {
   pink:   'rgba(236,72,153,0.07)', cyan:   'rgba(6,182,212,0.07)',
 };
 
-export default function ProductCard({ product, onAdd, quantity = 0, categoryColor, categoryName }: ProductCardProps) {
+export default function ProductCard({ product, onAdd, quantity = 0, categoryColor }: ProductCardProps) {
   const [flash, setFlash] = useState(false);
   const accent = categoryColor ? (COLOR_MAP[categoryColor] ?? '#3b82f6') : undefined;
   const bgTint  = categoryColor ? (BG_MAP[categoryColor]  ?? 'transparent') : 'transparent';

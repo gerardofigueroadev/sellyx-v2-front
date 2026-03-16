@@ -356,16 +356,6 @@ export default function HomePage() {
 
   const canManageShift = hasPermission('sales:create');
 
-  // fetchShift is called explicitly after open/close actions
-  const fetchShift = useCallback(async () => {
-    if (!token || !canManageShift) return;
-    const qs = activeBranchId ? `?branchId=${activeBranchId}` : '';
-    const res = await apiFetch(token, `/shifts/active${qs}`);
-    if (res.ok) {
-      const data = await res.json();
-      setActiveShift(data ?? null);
-    }
-  }, [token, canManageShift, activeBranchId]);
 
   const fetchData = useCallback(async () => {
     if (!token) return;

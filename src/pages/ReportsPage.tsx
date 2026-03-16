@@ -303,11 +303,11 @@ function TabPagos({ summary, loading }: { summary: Summary | null; loading: bool
       <ChartCard title="Distribución por método de pago" loading={false}>
         <ResponsiveContainer width="100%" height={220}>
           <PieChart>
-            <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+            <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }: { name: string; percent?: number }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
               {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
             </Pie>
             <Legend formatter={(v) => <span className="text-slate-300 text-xs">{v}</span>} />
-            <Tooltip formatter={(v: number) => bs(v)} />
+            <Tooltip formatter={(v) => bs(Number(v))} />
           </PieChart>
         </ResponsiveContainer>
       </ChartCard>

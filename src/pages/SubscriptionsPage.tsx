@@ -58,8 +58,8 @@ function limitLabel(v: number) { return v === -1 ? '∞' : String(v); }
 
 // ─── Renew Modal ──────────────────────────────────────────────────────────────
 function RenewModal({
-  sub, plans, token, onClose, onDone,
-}: { sub: Subscription; plans: Plan[]; token: string; onClose: () => void; onDone: () => void }) {
+  sub, token, onClose, onDone,
+}: { sub: Subscription; token: string; onClose: () => void; onDone: () => void }) {
   const [days, setDays] = useState(sub.plan.durationDays);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -306,7 +306,7 @@ export default function SubscriptionsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-900">
       {renewTarget && token && (
-        <RenewModal sub={renewTarget} plans={plans} token={token}
+        <RenewModal sub={renewTarget} token={token}
           onClose={() => setRenewTarget(null)} onDone={() => { setRenewTarget(null); load(); }} />
       )}
       {showCreate && token && (
