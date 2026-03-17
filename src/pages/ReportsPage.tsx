@@ -35,10 +35,13 @@ const bs = (n: number, cur: string) => `${cur} ${n.toFixed(2)}`;
 const fmtDay = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
 const fmtDt  = (d: string) => new Date(d).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-function today() { return new Date().toISOString().split('T')[0]; }
+function localDateStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function today() { return localDateStr(new Date()); }
 function daysAgo(n: number) {
   const d = new Date(); d.setDate(d.getDate() - n);
-  return d.toISOString().split('T')[0];
+  return localDateStr(d);
 }
 
 const PRESETS = [
