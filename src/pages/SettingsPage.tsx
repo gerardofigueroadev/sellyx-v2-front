@@ -1196,8 +1196,8 @@ function TabWhatsapp({ token }: { token: string }) {
         apiFetch(token, '/whatsapp/config'),
         apiFetch(token, '/whatsapp/keywords'),
       ]);
-      if (cfgRes.ok) { const d = await cfgRes.json(); if (d) setConfig(d); }
-      if (kwRes.ok) setKeywords(await kwRes.json());
+      if (cfgRes.ok) { const text = await cfgRes.text(); if (text) { const d = JSON.parse(text); if (d) setConfig(d); } }
+      if (kwRes.ok) { const text = await kwRes.text(); if (text) setKeywords(JSON.parse(text)); }
       setLoading(false);
     })();
   }, [token]);
