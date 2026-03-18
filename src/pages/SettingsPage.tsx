@@ -1175,8 +1175,172 @@ function KitchenTimingCard({ warningMins, dangerMins, saving, onSave }: {
   );
 }
 
+// ─── Tab WhatsApp ─────────────────────────────────────────────────────────────
+interface WaConfig { id?: number; phoneNumberId: string; accessToken: string; verifyToken: string; isActive: boolean; }
+interface WaKeyword { id: number; keyword: string; response: string; isActive: boolean; }
+
+function TabWhatsapp({ token }: { token: string }) {
+  const [config, setConfig] = useState<WaConfig>({ phoneNumberId: '', accessToken: '', verifyToken: '', isActive: true });
+  const [keywords, setKeywords] = useState<WaKeyword[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState('');
+  const [newKw, setNewKw] = useState({ keyword: '', response: '' });
+  const [addingKw, setAddingKw] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const [cfgRes, kwRes] = await Promise.all([
+        apiFetch(token, '/whatsapp/config'),
+        apiFetch(token, '/whatsapp/keywords'),
+      ]);
+      if (cfgRes.ok) { const d = await cfgRes.json(); if (d) setConfig(d); }
+      if (kwRes.ok) setKeywords(await kwRes.json());
+      setLoading(false);
+    })();
+  }, [token]);
+
+  const saveConfig = async () => {
+    setSaving(true);
+    try {
+      const res = await apiFetch(token, '/whatsapp/config', { method: 'POST', body: JSON.stringify(config) });
+      if (!res.ok) throw new Error();
+      setToast('Configuración guardada');
+    } catch { setToast('⚠️ Error al guardar'); }
+    finally { setSaving(false); }
+  };
+
+  const addKeyword = async () => {
+    if (!newKw.keyword.trim() || !newKw.response.trim()) return;
+    setAddingKw(true);
+    try {
+      const res = await apiFetch(token, '/whatsapp/keywords', { method: 'POST', body: JSON.stringify(newKw) });
+      if (!res.ok) throw new Error();
+      const created = await res.json();
+      setKeywords(p => [...p, created]);
+      setNewKw({ keyword: '', response: '' });
+      setToast('Palabra clave agregada');
+    } catch { setToast('⚠️ Error al agregar'); }
+    finally { setAddingKw(false); }
+  };
+
+  const deleteKeyword = async (id: number) => {
+    const res = await apiFetch(token, `/whatsapp/keywords/${id}`, { method: 'DELETE' });
+    if (res.ok) setKeywords(p => p.filter(k => k.id !== id));
+    else setToast('⚠️ Error al eliminar');
+  };
+
+  const toggleKeyword = async (kw: WaKeyword) => {
+    const res = await apiFetch(token, `/whatsapp/keywords/${kw.id}`, { method: 'PATCH', body: JSON.stringify({ isActive: !kw.isActive }) });
+    if (res.ok) setKeywords(p => p.map(k => k.id === kw.id ? { ...k, isActive: !k.isActive } : k));
+  };
+
+  if (loading) return <div className="flex justify-center py-16"><div className="animate-spin w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full" /></div>;
+
+  return (
+    <div className="max-w-2xl space-y-5">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+
+      {/* Credenciales */}
+      <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-green-600/20 rounded-xl flex items-center justify-center text-xl">💬</div>
+          <div>
+            <h3 className="text-white font-bold text-sm">Credenciales WhatsApp</h3>
+            <p className="text-slate-500 text-xs">Datos de tu app en Meta for Developers</p>
+          </div>
+        </div>
+
+        <Field label="Phone Number ID">
+          <Input value={config.phoneNumberId} onChange={v => setConfig(c => ({ ...c, phoneNumberId: v }))} placeholder="Ej: 888894154297212" />
+        </Field>
+        <Field label="Access Token (token permanente)">
+          <div className="relative">
+            <input
+              type={showToken ? 'text' : 'password'}
+              value={config.accessToken}
+              onChange={e => setConfig(c => ({ ...c, accessToken: e.target.value }))}
+              placeholder="EAALbVo..."
+              className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-green-500 pr-10"
+            />
+            <button onClick={() => setShowToken(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs">
+              {showToken ? 'Ocultar' : 'Ver'}
+            </button>
+          </div>
+        </Field>
+        <Field label="Verify Token (el que inventaste en Meta)">
+          <Input value={config.verifyToken} onChange={v => setConfig(c => ({ ...c, verifyToken: v }))} placeholder="Ej: mi_token_secreto_2024" />
+        </Field>
+
+        <div className="flex items-center justify-between pt-1">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={config.isActive} onChange={e => setConfig(c => ({ ...c, isActive: e.target.checked }))}
+              className="w-4 h-4 rounded accent-green-500" />
+            <span className="text-slate-300 text-sm">Bot activo</span>
+          </label>
+          <button onClick={saveConfig} disabled={saving}
+            className="bg-green-600 hover:bg-green-500 disabled:bg-green-900 text-white px-5 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2">
+            {saving && <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full inline-block" />}
+            {saving ? 'Guardando...' : 'Guardar credenciales'}
+          </button>
+        </div>
+
+        <div className="bg-slate-700/40 rounded-xl p-3 text-xs text-slate-400 space-y-0.5">
+          <p className="font-medium text-slate-300">URL del webhook para Meta:</p>
+          <p className="font-mono text-green-400 break-all">https://sellyx-v2-back.onrender.com/api/webhooks/whatsapp</p>
+        </div>
+      </div>
+
+      {/* Palabras clave */}
+      <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-4">
+        <h3 className="text-white font-bold text-sm">Respuestas automáticas</h3>
+
+        {keywords.length === 0 && (
+          <p className="text-slate-500 text-sm text-center py-4">No hay palabras clave configuradas</p>
+        )}
+
+        {keywords.map(kw => (
+          <div key={kw.id} className={`flex items-start gap-3 p-3 rounded-xl border ${kw.isActive ? 'border-slate-600 bg-slate-700/30' : 'border-slate-700/30 bg-slate-800/30 opacity-60'}`}>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-sm font-medium">"{kw.keyword}"</p>
+              <p className="text-slate-400 text-xs mt-0.5 line-clamp-2">{kw.response}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => toggleKeyword(kw)} className={`text-xs px-2 py-1 rounded-lg transition ${kw.isActive ? 'bg-green-600/20 text-green-400 hover:bg-green-600/30' : 'bg-slate-600/20 text-slate-400 hover:bg-slate-600/30'}`}>
+                {kw.isActive ? 'Activa' : 'Inactiva'}
+              </button>
+              <button onClick={() => deleteKeyword(kw.id)} className="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded-lg hover:bg-red-600/10 transition">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* Agregar nueva */}
+        <div className="border border-dashed border-slate-600 rounded-xl p-3 space-y-2">
+          <p className="text-slate-400 text-xs font-medium">Nueva palabra clave</p>
+          <div className="grid grid-cols-2 gap-2">
+            <input value={newKw.keyword} onChange={e => setNewKw(p => ({ ...p, keyword: e.target.value }))}
+              placeholder='Ej: menu, horario, precio...'
+              className="bg-slate-700/60 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-green-500" />
+            <input value={newKw.response} onChange={e => setNewKw(p => ({ ...p, response: e.target.value }))}
+              placeholder='Respuesta automática...'
+              className="bg-slate-700/60 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-green-500" />
+          </div>
+          <button onClick={addKeyword} disabled={addingKw || !newKw.keyword.trim() || !newKw.response.trim()}
+            className="bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white px-4 py-1.5 rounded-lg text-xs font-medium transition">
+            + Agregar respuesta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
-type TabId = 'empresa' | 'sucursales' | 'usuarios' | 'roles' | 'permisos' | 'flags';
+type TabId = 'empresa' | 'sucursales' | 'usuarios' | 'roles' | 'permisos' | 'flags' | 'whatsapp';
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'empresa',    label: 'Empresa',    icon: '🏢' },
@@ -1185,6 +1349,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'roles',      label: 'Roles',      icon: '🔑' },
   { id: 'permisos',   label: 'Permisos',   icon: '🛡️' },
   { id: 'flags',      label: 'Comportamiento', icon: '⚙️' },
+  { id: 'whatsapp',   label: 'WhatsApp',       icon: '💬' },
 ];
 
 export default function SettingsPage() {
@@ -1252,6 +1417,7 @@ export default function SettingsPage() {
           onRoleDeleted={id => setRoles(p => p.filter(x => x.id !== id))} />}
         {activeTab === 'permisos'   && <TabPermisos allPermissions={allPermissions} loading={permsLoading} roles={roles} rolesLoading={rolesLoading} />}
         {activeTab === 'flags'      && <TabFlags token={token} />}
+        {activeTab === 'whatsapp'   && <TabWhatsapp token={token} />}
       </div>
     </div>
   );
