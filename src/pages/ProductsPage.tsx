@@ -72,10 +72,10 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-xl">📋</span>
             <h2 className="text-white font-bold">Copiar productos</h2>
@@ -111,7 +111,7 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
           </div>
         ) : (
           /* ── Form screen ── */
-          <div className="p-6 space-y-5">
+          <div className="p-6 space-y-5 overflow-y-auto flex-1">
             <p className="text-slate-400 text-sm">
               Copia todos los productos de una sucursal a otra. Los productos que ya existen en el destino se omiten.
             </p>

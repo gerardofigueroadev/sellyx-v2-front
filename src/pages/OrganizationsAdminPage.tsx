@@ -568,7 +568,7 @@ function CreateOrgModal({ token, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl">
+      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <span className="text-xl">🏢</span>
@@ -576,7 +576,7 @@ function CreateOrgModal({ token, onClose, onCreated }: {
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-slate-400 text-xs mb-1.5">Nombre del negocio *</label>
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}

@@ -181,7 +181,7 @@ function OpenShiftModal({ onConfirm, onClose }: {
   const [notes, setNotes] = useState('');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl">
+      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <span className="text-xl">🟢</span>
@@ -189,7 +189,7 @@ function OpenShiftModal({ onConfirm, onClose }: {
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto inicial en caja ({currency})</label>
             <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
@@ -250,14 +250,14 @@ function CloseShiftModal({ onConfirm, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl">
+      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
 
         {step === 'amount' && <>
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
             <div className="flex items-center gap-2"><span className="text-xl">🔴</span><h2 className="text-white font-bold">Cerrar Caja</h2></div>
             <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 overflow-y-auto flex-1">
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Monto contado en caja ({currency})</label>
               <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}

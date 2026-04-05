@@ -247,12 +247,12 @@ function TabSucursales({ token }: { token: string }) {
       {/* Modal crear/editar */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
               <h2 className="text-white font-bold">{editing ? 'Editar sucursal' : 'Nueva sucursal'}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white text-xl">✕</button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               <Field label="Nombre *">
                 <Input value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} placeholder="Ej: Sucursal Centro" />
               </Field>
@@ -324,7 +324,7 @@ function ResetPasswordModal({ user, token, onClose, onDone }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between border-b border-slate-700 px-6 py-4">
           <div>
             <h3 className="text-white font-bold">Restablecer contraseña</h3>
@@ -332,7 +332,7 @@ function ResetPasswordModal({ user, token, onClose, onDone }: {
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1.5">Nueva contraseña *</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)}
@@ -390,12 +390,12 @@ function CreateUserModal({ token, roles, branches, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl">
+      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between border-b border-slate-700 px-6 py-4">
           <h3 className="text-white font-bold">Nuevo usuario</h3>
           <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Nombre *</label>

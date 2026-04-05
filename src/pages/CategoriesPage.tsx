@@ -381,7 +381,7 @@ export default function CategoriesPage() {
       {/* ── Modal crear / editar ── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
               <h2 className="text-white font-bold text-lg">
                 {editing ? 'Editar categoría' : 'Nueva categoría'}
@@ -389,7 +389,7 @@ export default function CategoriesPage() {
               <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-white text-xl transition">✕</button>
             </div>
 
-            <div className="p-6 space-y-5">
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
 
               {/* Emoji + nombre en fila */}
               <div className="flex gap-3 items-start">

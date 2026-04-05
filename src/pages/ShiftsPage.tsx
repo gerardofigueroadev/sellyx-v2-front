@@ -112,8 +112,8 @@ function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; t
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
           <div>
             <h2 className="text-white font-bold text-lg">Resumen del turno</h2>
             {s && <p className="text-slate-400 text-xs mt-0.5">{s.shift.branch.name} · {s.shift.user?.name ?? 'Sistema'}</p>}
@@ -129,7 +129,7 @@ function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; t
             <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : s ? (
-          <div className="px-6 py-5 space-y-3">
+          <div className="px-6 py-5 space-y-3 overflow-y-auto flex-1">
             {/* Horario */}
             <div className="bg-slate-700/40 rounded-xl px-4 py-3 flex items-center justify-between text-sm">
               <div>
