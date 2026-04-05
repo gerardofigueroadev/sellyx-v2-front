@@ -41,15 +41,16 @@ input[type="number"] {
 }
 
 /* ─── Thermal print ─────────────────────────────────────────────────────────── */
+/* TM-T20IIIL: rollo 80mm, área imprimible 72mm (~272px a 96dpi)                */
 #thermal-print-area {
   position: fixed;
   left: -9999px;
   top: 0;
-  width: 80mm;
+  width: 72mm;
 }
 
 @media print {
-  @page { size: 80mm auto; margin: 0; }
+  @page { size: 80mm auto; margin: 4mm; }
 
   body * { visibility: hidden; }
 
@@ -61,5 +62,6 @@ input[type="number"] {
   #thermal-print-area {
     left: 0;
     top: 0;
+    width: 72mm;
   }
 }

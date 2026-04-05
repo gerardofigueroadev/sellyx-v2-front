@@ -55,7 +55,7 @@ export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: {
     <div id="thermal-print-area" style={{
       fontFamily: "'Courier New', Courier, monospace",
       fontSize: '12px',
-      width: '302px',
+      width: '272px',
       padding: '8px',
       backgroundColor: '#fff',
       color: '#000',

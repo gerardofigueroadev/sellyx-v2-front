@@ -19,14 +19,14 @@ const PAY_LABEL: Record<string, string> = {
   cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia',
 };
 
-function pad(left: string, right: string, width = 32) {
+function pad(left: string, right: string, width = 30) {
   const gap = width - left.length - right.length;
   return left + ' '.repeat(Math.max(1, gap)) + right;
 }
 
 function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
   return (
-    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '12px', width: '302px', lineHeight: '1.4', color: '#000' }}>
+    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '12px', width: '272px', lineHeight: '1.4', color: '#000' }}>
       {/* Header */}
       <div style={{ textAlign: 'center', marginBottom: '6px' }}>
         <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{d.orgName}</div>
@@ -82,7 +82,7 @@ function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
 
 function KitchenTicket({ d }: { d: OrderTicketData }) {
   return (
-    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '13px', width: '302px', lineHeight: '1.6', color: '#000' }}>
+    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '13px', width: '272px', lineHeight: '1.6', color: '#000' }}>
       <div style={{ textAlign: 'center', marginBottom: '4px' }}>
         <div style={{ fontWeight: 'bold', fontSize: '16px' }}>*** COCINA ***</div>
         <div style={{ fontWeight: 'bold', fontSize: '22px' }}>#{d.ticketNumber}</div>
