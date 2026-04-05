@@ -3,6 +3,7 @@ import { CartItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 
 export type PaymentMethod = 'cash' | 'card' | 'transfer';
+export type OrderType = 'dine_in' | 'takeaway';
 
 const PAYMENT_OPTIONS: { key: PaymentMethod; emoji: string; label: string; checkoutLabel: string }[] = [
   { key: 'cash',     emoji: '💵', label: 'Efectivo',          checkoutLabel: '💵 Cobrar en efectivo' },
@@ -14,7 +15,7 @@ interface CartProps {
   items: CartItem[];
   onRemove: (id: number) => void;
   onClear: () => void;
-  onCheckout: (paymentMethod: PaymentMethod) => void;
+  onCheckout: (paymentMethod: PaymentMethod, orderType: OrderType) => void;
   onNoteChange?: (id: number, note: string) => void;
   allowItemNotes?: boolean;
 }
@@ -22,6 +23,7 @@ interface CartProps {
 export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes }: CartProps) {
   const { currency, enabledPaymentMethods } = useAuth();
   const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
+  const [orderType, setOrderType] = useState<OrderType>('dine_in');
 
   const visibleOptions = PAYMENT_OPTIONS.filter(o => enabledPaymentMethods.includes(o.key));
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() =>
@@ -120,6 +122,24 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
           <span className="text-white font-bold text-lg">{currency} {total.toFixed(2)}</span>
         </div>
 
+        {/* Tipo de orden */}
+        <div className="grid grid-cols-2 gap-2">
+          {([['dine_in', '🍽️', 'Mesa'], ['takeaway', '🥡', 'Para llevar']] as const).map(([key, emoji, label]) => (
+            <button
+              key={key}
+              onClick={() => setOrderType(key)}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition ${
+                orderType === key
+                  ? 'bg-amber-600/20 border-amber-500 text-amber-400'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              <span className="text-base">{emoji}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Método de pago — solo si hay más de uno activo */}
         {visibleOptions.length > 1 && (
           <div>
@@ -146,7 +166,7 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
         {/* Cobrar */}
         <button
           disabled={items.length === 0}
-          onClick={() => onCheckout(activeMethod)}
+          onClick={() => onCheckout(activeMethod, orderType)}
           className="w-full bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition shadow-lg hover:shadow-green-500/20"
         >
           {visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar'}

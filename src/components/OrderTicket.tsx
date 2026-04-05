@@ -4,6 +4,7 @@ export interface OrderTicketData {
   ticketNumber: number;
   orderNumber: string;
   paymentMethod: string;
+  orderType?: 'dine_in' | 'takeaway';
   items: { name: string; quantity: number; unitPrice: number; subtotal: number; notes?: string }[];
   total: number;
   notes?: string;
@@ -41,6 +42,9 @@ function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
         <div>{pad('Fecha:', new Date(d.createdAt).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }))}</div>
         {d.cashierName && <div>{pad('Cajero:', d.cashierName)}</div>}
         <div>{pad('Pago:', PAY_LABEL[d.paymentMethod] ?? d.paymentMethod)}</div>
+        {d.orderType && (
+          <div style={{ fontWeight: 'bold' }}>{pad('Tipo:', d.orderType === 'takeaway' ? '🥡 Para llevar' : '🍽️ Para mesa')}</div>
+        )}
       </div>
 
       <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
@@ -82,7 +86,12 @@ function KitchenTicket({ d }: { d: OrderTicketData }) {
       <div style={{ textAlign: 'center', marginBottom: '4px' }}>
         <div style={{ fontWeight: 'bold', fontSize: '16px' }}>*** COCINA ***</div>
         <div style={{ fontWeight: 'bold', fontSize: '22px' }}>#{d.ticketNumber}</div>
-        <div style={{ fontSize: '11px' }}>
+        {d.orderType && (
+          <div style={{ fontWeight: 'bold', fontSize: '15px', border: '2px solid #000', display: 'inline-block', padding: '1px 8px', marginTop: '2px' }}>
+            {d.orderType === 'takeaway' ? '🥡 PARA LLEVAR' : '🍽️ PARA MESA'}
+          </div>
+        )}
+        <div style={{ fontSize: '11px', marginTop: '2px' }}>
           {new Date(d.createdAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>

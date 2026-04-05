@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ApiProduct, ApiCategory, CartItem } from '../types';
 import ProductCard from '../components/ProductCard';
-import Cart, { PaymentMethod } from '../components/Cart';
+import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import OrderTicket, { OrderTicketData } from '../components/OrderTicket';
 
@@ -459,7 +459,7 @@ export default function HomePage() {
 
   const handleRemove = (id: number) => setCartItems(prev => prev.filter(i => i.id !== id));
 
-  const handleCheckout = async (paymentMethod: PaymentMethod) => {
+  const handleCheckout = async (paymentMethod: PaymentMethod, orderType: OrderType) => {
     if (!token || cartItems.length === 0) return;
 
     // POS requiere turno activo
@@ -472,6 +472,7 @@ export default function HomePage() {
     const body = {
       channel: 'pos',
       paymentMethod,
+      orderType,
       items: cartItems.map(i => ({ productId: i.id, quantity: i.quantity, ...(i.note ? { notes: i.note } : {}) })),
       ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}),
     };
@@ -504,6 +505,7 @@ export default function HomePage() {
           cashierName: (user as any)?.name,
           createdAt:   order.createdAt ?? new Date().toISOString(),
           currency,
+          orderType:   order.orderType ?? orderType,
         });
       }
     } else {
@@ -766,7 +768,7 @@ export default function HomePage() {
           items={cartItems}
           onRemove={handleRemove}
           onClear={() => setCartItems([])}
-          onCheckout={(pm) => handleCheckout(pm)}
+          onCheckout={(pm, ot) => handleCheckout(pm, ot)}
           allowItemNotes={!!orgSettings.allowItemNotes}
           onNoteChange={(id, note) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, note } : i))}
         />
