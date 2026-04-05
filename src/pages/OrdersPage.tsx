@@ -12,6 +12,7 @@ const apiFetch = (token: string, path: string, opts?: RequestInit) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrderStatus = 'pending' | 'completed' | 'cancelled' | 'voided';
 type OrderChannel = 'pos' | 'chatbot' | 'web';
+type OrderType = 'dine_in' | 'takeaway';
 
 interface OrderItem {
   id: number;
@@ -28,6 +29,7 @@ interface Order {
   status: OrderStatus;
   paymentMethod: 'cash' | 'card' | 'transfer';
   channel: OrderChannel;
+  orderType: OrderType;
   total: number;
   notes: string | null;
   voidReason: string | null;
@@ -59,6 +61,11 @@ const CHANNEL_LABEL: Record<OrderChannel, string> = {
   pos:     '🖥️ POS',
   chatbot: '🤖 Chatbot',
   web:     '🌐 Web',
+};
+
+const ORDER_TYPE_LABEL: Record<OrderType, string> = {
+  dine_in:  '🍽️ Mesa',
+  takeaway: '🥡 Llevar',
 };
 
 const PAYMENT_LABEL: Record<string, string> = {
@@ -155,6 +162,10 @@ function OrderDetailModal({
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-700 space-y-3 shrink-0">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-400">Tipo</span>
+            <span className="text-slate-300">{ORDER_TYPE_LABEL[order.orderType] ?? '—'}</span>
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-slate-400">Pago</span>
             <span className="text-slate-300">{PAYMENT_LABEL[order.paymentMethod]}</span>
@@ -429,12 +440,13 @@ export default function OrdersPage() {
       <div className="flex-1 overflow-y-auto">
         {/* Table header */}
         <div className={`sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-5 py-3 grid gap-4 text-xs font-semibold uppercase tracking-wider text-slate-500 ${
-          isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto]'
+          isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]'
         }`}>
           <span>Orden</span>
           <span className="w-28">Turno</span>
           {isAdmin && <span className="w-28">Sucursal</span>}
           <span className="w-24 text-center">Canal</span>
+          <span className="w-24 text-center">Tipo</span>
           <span className="w-24 text-center">Hora</span>
           <span className="w-20 text-center">Items</span>
           <span className="w-28 text-right">Total</span>
@@ -457,7 +469,7 @@ export default function OrdersPage() {
               key={order.id}
               onClick={() => setSelected(order)}
               className={`px-5 py-4 border-b border-slate-700/30 grid gap-4 items-center hover:bg-slate-800/60 cursor-pointer transition-colors group ${
-                isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto]'
+                isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]'
               }`}
             >
               {/* Número */}
@@ -497,6 +509,11 @@ export default function OrdersPage() {
               {/* Canal */}
               <div className="w-24 text-center">
                 <span className="text-xs text-slate-400">{CHANNEL_LABEL[order.channel]}</span>
+              </div>
+
+              {/* Tipo */}
+              <div className="w-24 text-center">
+                <span className="text-xs text-slate-400">{ORDER_TYPE_LABEL[order.orderType] ?? '—'}</span>
               </div>
 
               {/* Hora */}
