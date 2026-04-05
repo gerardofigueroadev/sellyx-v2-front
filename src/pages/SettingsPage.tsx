@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { listPrinters, getSavedPrinter, savePrinter } from '../hooks/usePrinterStore';
 import { useAuth } from '../context/AuthContext';
 
 import API_URL from '../config';
@@ -1079,6 +1080,9 @@ function TabFlags({ token }: { token: string }) {
         />
       </div>
 
+      {/* Impresora térmica */}
+      <PrinterCard />
+
       {/* Tiempos de alerta en cola de cocina */}
       <KitchenTimingCard
         warningMins={settings.kitchenWarningMins ?? 5}
@@ -1086,6 +1090,88 @@ function TabFlags({ token }: { token: string }) {
         saving={saving}
         onSave={saveTimings}
       />
+    </div>
+  );
+}
+
+// ─── Printer Card ─────────────────────────────────────────────────────────────
+function PrinterCard() {
+  const [printers, setPrinters]   = useState<string[]>([]);
+  const [selected, setSelected]   = useState<string>('');
+  const [saved,    setSaved]       = useState<string>('');
+  const [loading,  setLoading]    = useState(true);
+  const [toast,    setToast]      = useState('');
+  const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    Promise.all([listPrinters(), getSavedPrinter()]).then(([list, current]) => {
+      setPrinters(list);
+      if (current) { setSelected(current); setSaved(current); }
+      else if (list.length > 0) setSelected(list[0]);
+      setLoading(false);
+    });
+  }, []);
+
+  const save = async () => {
+    if (!selected) return;
+    await savePrinter(selected);
+    setSaved(selected);
+    if (toastRef.current) clearTimeout(toastRef.current);
+    setToast('Impresora guardada');
+    toastRef.current = setTimeout(() => setToast(''), 2500);
+  };
+
+  if (loading) return (
+    <div className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />
+  );
+
+  const isTauriEnv = printers.length > 0 || !loading;
+
+  return (
+    <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <div className="flex items-center gap-3">
+        <span className="text-2xl">🖨️</span>
+        <div>
+          <p className="text-white font-semibold text-sm">Impresora térmica</p>
+          <p className="text-slate-500 text-xs mt-0.5">
+            {isTauriEnv
+              ? 'Selecciona la impresora para imprimir tickets sin popup'
+              : 'Solo disponible en la aplicación de escritorio'}
+          </p>
+        </div>
+      </div>
+
+      {printers.length === 0 ? (
+        <p className="text-slate-500 text-xs bg-slate-700/40 rounded-xl px-4 py-3">
+          No se encontraron impresoras instaladas en este equipo.
+        </p>
+      ) : (
+        <div className="flex gap-2">
+          <select
+            value={selected}
+            onChange={e => setSelected(e.target.value)}
+            className="flex-1 bg-slate-700/60 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {printers.map(p => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <button
+            onClick={save}
+            disabled={selected === saved}
+            className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed"
+          >
+            Guardar
+          </button>
+        </div>
+      )}
+
+      {saved && (
+        <p className="text-green-400 text-xs">
+          ✓ Activa: <span className="font-medium">{saved}</span>
+        </p>
+      )}
     </div>
   );
 }

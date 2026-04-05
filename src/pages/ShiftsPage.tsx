@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 
 import API_URL from '../config';
+import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
 const API = `${API_URL}/api`;
 const apiFetch = (token: string, path: string, opts?: RequestInit) =>
   fetch(`${API}${path}`, {
@@ -59,9 +60,9 @@ function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: stri
   // useEffect garantiza que el div ya está en el DOM antes de imprimir
   useEffect(() => {
     if (!reportData) return;
-    window.print();
     const cleanup = () => setReportData(null);
     window.addEventListener('afterprint', cleanup, { once: true });
+    applyPrinterAndPrint(() => window.print());
     return () => window.removeEventListener('afterprint', cleanup);
   }, [reportData]);
 

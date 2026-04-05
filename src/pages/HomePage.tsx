@@ -7,6 +7,7 @@ import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintRece
 import OrderTicket, { OrderTicketData } from '../components/OrderTicket';
 
 import API_URL from '../config';
+import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
 const API = `${API_URL}/api`;
 const apiFetch = (token: string, path: string, opts?: RequestInit) =>
   fetch(`${API}${path}`, {
@@ -346,17 +347,17 @@ export default function HomePage() {
   // useEffect garantiza que el div ya está en el DOM antes de imprimir
   useEffect(() => {
     if (!printReport) return;
-    window.print();
     const cleanup = () => setPrintReport(null);
     window.addEventListener('afterprint', cleanup, { once: true });
+    applyPrinterAndPrint(() => window.print());
     return () => window.removeEventListener('afterprint', cleanup);
   }, [printReport]);
 
   useEffect(() => {
     if (!printTicket) return;
-    window.print();
     const cleanup = () => setPrintTicket(null);
     window.addEventListener('afterprint', cleanup, { once: true });
+    applyPrinterAndPrint(() => window.print());
     return () => window.removeEventListener('afterprint', cleanup);
   }, [printTicket]);
 
