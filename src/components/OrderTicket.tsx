@@ -24,7 +24,7 @@ function pad(left: string, right: string, width = 30) {
   return left + ' '.repeat(Math.max(1, gap)) + right;
 }
 
-function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
+export function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
   return (
     <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '13px', fontWeight: 'bold', width: '272px', lineHeight: '1.5', color: '#000' }}>
       {/* Header */}
@@ -80,7 +80,7 @@ function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
   );
 }
 
-function KitchenTicket({ d }: { d: OrderTicketData }) {
+export function KitchenTicket({ d }: { d: OrderTicketData }) {
   return (
     <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '14px', fontWeight: 'bold', width: '272px', lineHeight: '1.6', color: '#000' }}>
       <div style={{ textAlign: 'center', marginBottom: '4px' }}>

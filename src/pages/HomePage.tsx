@@ -4,7 +4,7 @@ import { ApiProduct, ApiCategory, CartItem } from '../types';
 import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
-import OrderTicket, { OrderTicketData } from '../components/OrderTicket';
+import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
 
 import API_URL from '../config';
 import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
@@ -338,6 +338,7 @@ export default function HomePage() {
   const [shiftError, setShiftError]         = useState('');
   const [printReport,  setPrintReport]      = useState<ShiftReportData | null>(null);
   const [printTicket,  setPrintTicket]      = useState<OrderTicketData | null>(null);
+  const [printPhase,   setPrintPhase]       = useState<'client' | 'kitchen' | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>({});
   const [mobileCatId,  setMobileCatId]      = useState<number | null>(null);
   const [layoutMode,   setLayoutMode]       = useState<'grid' | 'columns'>(() =>
@@ -353,13 +354,22 @@ export default function HomePage() {
     return () => window.removeEventListener('afterprint', cleanup);
   }, [printReport]);
 
+  // Impresión de tickets: si hay fase activa imprime y avanza a la siguiente
   useEffect(() => {
-    if (!printTicket) return;
-    const cleanup = () => setPrintTicket(null);
-    window.addEventListener('afterprint', cleanup, { once: true });
+    if (!printTicket || !printPhase) return;
+    const onAfterPrint = () => {
+      if (printPhase === 'client' && orgSettings.autoPrintTicketOnOrder) {
+        // Avanzar a cocina en el siguiente ciclo de render
+        setPrintPhase('kitchen');
+      } else {
+        setPrintTicket(null);
+        setPrintPhase(null);
+      }
+    };
+    window.addEventListener('afterprint', onAfterPrint, { once: true });
     applyPrinterAndPrint(() => window.print());
-    return () => window.removeEventListener('afterprint', cleanup);
-  }, [printTicket]);
+    return () => window.removeEventListener('afterprint', onAfterPrint);
+  }, [printPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canManageShift = hasPermission('sales:create');
 
@@ -486,29 +496,30 @@ export default function HomePage() {
       setCartItems([]);
       setKitchenKey(k => k + 1);
 
-      // Auto-print ticket doble si el flag está activado
-      if (orgSettings.autoPrintTicketOnOrder) {
-        setPrintTicket({
-          ticketNumber:  order.ticketNumber,
-          orderNumber:   order.orderNumber,
-          paymentMethod: paymentMethod,
-          items: (order.items ?? []).map((item: any) => ({
-            name:      item.product?.name ?? '—',
-            quantity:  item.quantity,
-            unitPrice: parseFloat(item.unitPrice),
-            subtotal:  parseFloat(item.subtotal),
-            notes:     item.notes ?? undefined,
-          })),
-          total:       parseFloat(order.total),
-          notes:       order.notes ?? undefined,
-          branchName:  order.branch?.name ?? (user as any)?.branch?.name ?? '',
-          orgName,
-          cashierName: (user as any)?.name,
-          createdAt:   order.createdAt ?? new Date().toISOString(),
-          currency,
-          orderType:   order.orderType ?? orderType,
-        });
-      }
+      // Auto-print: siempre arranca con el ticket del cliente
+      // Si autoPrintTicketOnOrder está activo, después imprime el de cocina
+      const ticketData: OrderTicketData = {
+        ticketNumber:  order.ticketNumber,
+        orderNumber:   order.orderNumber,
+        paymentMethod: paymentMethod,
+        items: (order.items ?? []).map((item: any) => ({
+          name:      item.product?.name ?? '—',
+          quantity:  item.quantity,
+          unitPrice: parseFloat(item.unitPrice),
+          subtotal:  parseFloat(item.subtotal),
+          notes:     item.notes ?? undefined,
+        })),
+        total:       parseFloat(order.total),
+        notes:       order.notes ?? undefined,
+        branchName:  order.branch?.name ?? (user as any)?.branch?.name ?? '',
+        orgName,
+        cashierName: (user as any)?.name,
+        createdAt:   order.createdAt ?? new Date().toISOString(),
+        currency,
+        orderType:   order.orderType ?? orderType,
+      };
+      setPrintTicket(ticketData);
+      setPrintPhase('client');
     } else {
       const d = await res.json();
       setCheckoutMsg(`⚠️ ${d.message ?? 'Error al registrar venta'}`);
@@ -526,8 +537,17 @@ export default function HomePage() {
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Auto-print on shift close */}
       {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} currency={currency} />}
-      {/* Auto-print double ticket on order */}
-      {printTicket && <OrderTicket data={printTicket} />}
+      {/* Impresión de tickets: cliente primero, luego cocina (2 cortes separados) */}
+      {printTicket && printPhase === 'client' && (
+        <div id="thermal-print-area">
+          <ClientTicket d={printTicket} cur={printTicket.currency ?? 'Bs.'} />
+        </div>
+      )}
+      {printTicket && printPhase === 'kitchen' && (
+        <div id="thermal-print-area">
+          <KitchenTicket d={printTicket} />
+        </div>
+      )}
 
       {showOpenModal && (
         <OpenShiftModal
