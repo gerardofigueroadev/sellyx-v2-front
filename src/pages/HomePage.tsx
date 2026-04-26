@@ -348,9 +348,8 @@ export default function HomePage() {
   const [printPhase,   setPrintPhase]       = useState<'client' | 'kitchen' | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>({});
   const [mobileCatId,  setMobileCatId]      = useState<number | null>(null);
-  const [layoutMode,   setLayoutMode]       = useState<'grid' | 'columns'>(() =>
-    (localStorage.getItem('pos_layout') as 'grid' | 'columns') ?? 'grid'
-  );
+  const layoutMode: 'grid' | 'columns' = orgSettings.posLayout === 'columns' ? 'columns' : 'grid';
+  const showCategoryFilters = orgSettings.showCategoryFilters !== false;
 
   // useEffect garantiza que el div ya está en el DOM antes de imprimir
   useEffect(() => {
@@ -727,90 +726,14 @@ export default function HomePage() {
         />
       )}
 
-      {/* Header */}
-      <header className="bg-slate-800/50 border-b border-slate-700/50 px-4 py-3 xl:px-6 xl:py-4 flex items-center justify-between shrink-0 gap-3">
-        <div className="shrink-0">
-          <h1 className="text-white font-bold text-base xl:text-xl">Punto de Venta</h1>
-          <p className="text-slate-400 text-xs xl:text-sm">
-            {loading ? 'Cargando menú...' : `${products.length} productos disponibles`}
-          </p>
-        </div>
-
-        {/* Caja / Turno */}
-        {canManageShift && (
-          <div className="flex items-center gap-3">
-            {shiftError && (
-              <span className="text-red-400 text-xs bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg">
-                ⚠️ {shiftError}
-              </span>
-            )}
-
-            {activeShift ? (
-              <>
-                <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-lg">
-                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
-                  <span className="text-green-400 text-xs font-medium">Caja abierta desde {shiftTime}</span>
-                </div>
-                <button
-                  onClick={() => setShowCloseModal(true)}
-                  disabled={shiftLoading}
-                  className="bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold px-4 py-2 rounded-lg transition disabled:opacity-50">
-                  🔴 Cerrar Caja
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => setShowOpenModal(true)}
-                disabled={shiftLoading}
-                className="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition disabled:opacity-50">
-                🟢 Abrir Caja
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className="flex items-center gap-4 shrink-0">
-          {/* Indicador offline / sync */}
-          {isEffectivelyOffline && (
-            <div className="flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 rounded-lg text-xs text-amber-300 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
-              {forceOffline ? 'Modo sin conexión' : 'Sin conexión'}{pendingCount > 0 ? ` · ${pendingCount} pendiente${pendingCount !== 1 ? 's' : ''}` : ''}
-            </div>
-          )}
-          {!isEffectivelyOffline && syncing && (
-            <div className="flex items-center gap-1.5 bg-blue-500/15 border border-blue-500/30 px-3 py-1.5 rounded-lg text-xs text-blue-300 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse inline-block" />
-              Sincronizando...
-            </div>
-          )}
-          {!isEffectivelyOffline && !syncing && pendingCount > 0 && (
-            <div className="flex items-center gap-1.5 bg-green-500/15 border border-green-500/30 px-3 py-1.5 rounded-lg text-xs text-green-300 font-medium">
-              ↑ {pendingCount} por sincronizar
-            </div>
-          )}
-          {checkoutMsg && (
-            <div className={`border px-4 py-2 rounded-xl text-sm font-medium ${checkoutMsg.startsWith('⚠️')
-              ? 'bg-red-500/20 border-red-500/30 text-red-300'
-              : checkoutMsg.startsWith('📦')
-                ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
-                : 'bg-green-500/20 border-green-500/30 text-green-300'}`}>
-              {checkoutMsg}
-            </div>
-          )}
-          <div className="text-slate-400 text-sm">
-            {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </div>
-        </div>
-      </header>
-
       {/* Content */}
       <div className="flex flex-col lg:flex-row" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
 
         {/* ── Área de productos ── */}
         <div style={{ flex: '1 1 0%', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-          {/* Filtro de categorías + toggle de layout */}
-          {!loading && categories.length > 0 && (
+          {/* Filtros de categorías (configurable desde Settings) */}
+          {showCategoryFilters && !loading && categories.length > 0 && (
             <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px 0', overflowX: 'auto', scrollbarWidth: 'none' }}>
               <button
                 onClick={() => setMobileCatId(null)}
@@ -842,38 +765,6 @@ export default function HomePage() {
                   {cat.name}
                 </button>
               ))}
-
-              {/* Toggle layout */}
-              <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', background: 'rgb(15,23,42)', borderRadius: 8, padding: 3, gap: 2, border: '1px solid rgba(71,85,105,0.4)' }}>
-                <button
-                  onClick={() => { setLayoutMode('grid'); localStorage.setItem('pos_layout', 'grid'); }}
-                  title="Vista en filas"
-                  style={{
-                    padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                    background: layoutMode === 'grid' ? '#3b82f6' : 'transparent',
-                    color: layoutMode === 'grid' ? 'white' : '#64748b',
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-                  </svg>
-                </button>
-                <button
-                  onClick={() => { setLayoutMode('columns'); localStorage.setItem('pos_layout', 'columns'); }}
-                  title="Vista en columnas"
-                  style={{
-                    padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                    background: layoutMode === 'columns' ? '#3b82f6' : 'transparent',
-                    color: layoutMode === 'columns' ? 'white' : '#64748b',
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="8" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="16" y2="21"/>
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  </svg>
-                </button>
-              </div>
             </div>
           )}
 
@@ -883,7 +774,7 @@ export default function HomePage() {
               [1, 2, 3].map(n => (
                 <div key={n} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ height: 34, borderRadius: 10, background: 'rgba(51,65,85,0.4)', width: 140 }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6 }}>
                     {[...Array(n === 1 ? 5 : 2)].map((_, i) => (
                       <div key={i} style={{ height: 72, borderRadius: 10, background: 'rgba(51,65,85,0.25)' }} />
                     ))}
@@ -901,20 +792,15 @@ export default function HomePage() {
                 display: 'grid',
                 gridTemplateColumns: `repeat(${
                   (mobileCatId === null ? categories : categories.filter(c => c.id === mobileCatId)).length
-                }, minmax(160px, 1fr))`,
-                gap: 10, alignItems: 'start',
+                }, minmax(140px, 1fr))`,
+                gap: 8, alignItems: 'start',
               }}>
                 {categories
                   .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                   .map(cat => {
                     const catProducts = products.filter(p => p.category?.id === cat.id);
                     return (
-                      <div key={cat.id} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <div className={`${getGradient(cat.color)} flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm`}>
-                          <span style={{ fontSize: 16 }}>{cat.emoji || '🍽️'}</span>
-                          <span className="text-white font-bold text-xs">{cat.name}</span>
-                          <span className="text-white/60 text-xs ml-auto">{catProducts.filter(p => p.isAvailable).length}/{catProducts.length}</span>
-                        </div>
+                      <div key={cat.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {catProducts.map(p => (
                           <ProductCard
                             key={p.id} product={p} onAdd={handleAdd}
@@ -944,7 +830,7 @@ export default function HomePage() {
                         {catProducts.filter(p => p.isAvailable).length}/{catProducts.length}
                       </span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 6 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6 }}>
                       {catProducts.map(p => (
                         <ProductCard
                           key={p.id} product={p} onAdd={handleAdd}
@@ -973,16 +859,91 @@ export default function HomePage() {
           )}
         </div>
 
-        <Cart
-          items={cartItems}
-          onRemove={handleRemove}
-          onClear={() => setCartItems([])}
-          onCheckout={(pm, ot, cid, cphone) => handleCheckout(pm, ot, cid, cphone)}
-          allowItemNotes={!!orgSettings.allowItemNotes}
-          showCustomerLookup={!!orgSettings.showCustomerLookup}
-          onNoteChange={(id, note) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, note } : i))}
-        />
+        {/* ── Columna derecha: topbar + Cart ── */}
+        <div className="w-full lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] lg:max-h-none border-t lg:border-t-0 lg:border-l border-slate-700/50 overflow-hidden">
+
+          {/* Topbar compacta */}
+          <div className="px-3 py-2 border-b border-slate-700/50 bg-slate-800/60 shrink-0 space-y-1.5">
+            {/* Caja / turno */}
+            {canManageShift && (
+              activeShift ? (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-md min-w-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block shrink-0" />
+                    <span className="text-green-400 text-[11px] font-medium truncate">Caja {shiftTime}</span>
+                  </div>
+                  <button
+                    onClick={() => setShowCloseModal(true)}
+                    disabled={shiftLoading}
+                    className="bg-red-600/80 hover:bg-red-600 text-white text-[11px] font-bold px-2.5 py-1 rounded-md transition disabled:opacity-50 shrink-0">
+                    🔴 Cerrar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowOpenModal(true)}
+                  disabled={shiftLoading}
+                  className="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-md transition disabled:opacity-50">
+                  🟢 Abrir Caja
+                </button>
+              )
+            )}
+
+            {shiftError && (
+              <span className="block text-red-400 text-[11px] bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-md">
+                ⚠️ {shiftError}
+              </span>
+            )}
+
+            {/* Estado y fecha */}
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-slate-500 text-[11px] capitalize">
+                {new Date().toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </span>
+              {isEffectivelyOffline && (
+                <div className="flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] text-amber-300 font-medium">
+                  <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse inline-block" />
+                  {forceOffline ? 'Offline' : 'Sin red'}{pendingCount > 0 ? `·${pendingCount}` : ''}
+                </div>
+              )}
+              {!isEffectivelyOffline && syncing && (
+                <div className="flex items-center gap-1 bg-blue-500/15 border border-blue-500/30 px-1.5 py-0.5 rounded text-[10px] text-blue-300 font-medium">
+                  <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse inline-block" />
+                  Sync...
+                </div>
+              )}
+              {!isEffectivelyOffline && !syncing && pendingCount > 0 && (
+                <div className="bg-green-500/15 border border-green-500/30 px-1.5 py-0.5 rounded text-[10px] text-green-300 font-medium">
+                  ↑{pendingCount}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <Cart
+            items={cartItems}
+            onRemove={handleRemove}
+            onClear={() => setCartItems([])}
+            onCheckout={(pm, ot, cid, cphone) => handleCheckout(pm, ot, cid, cphone)}
+            allowItemNotes={!!orgSettings.allowItemNotes}
+            showCustomerLookup={!!orgSettings.showCustomerLookup}
+            onNoteChange={(id, note) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, note } : i))}
+          />
+        </div>
       </div>
+
+      {/* Toast flotante de checkout */}
+      {checkoutMsg && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 border px-4 py-2 rounded-xl text-sm font-medium shadow-lg ${
+          checkoutMsg.startsWith('⚠️')
+            ? 'bg-red-500/95 border-red-400 text-white'
+            : checkoutMsg.startsWith('📦')
+              ? 'bg-amber-500/95 border-amber-400 text-white'
+              : 'bg-green-500/95 border-green-400 text-white'
+        }`}>
+          {checkoutMsg}
+        </div>
+      )}
     </div>
   );
 }

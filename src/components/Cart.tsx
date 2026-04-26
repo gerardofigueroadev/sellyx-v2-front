@@ -100,7 +100,7 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
     : '';
 
   return (
-    <div className="w-full lg:w-64 xl:w-80 2xl:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-700/50 flex flex-col shrink-0 max-h-[40vh] lg:max-h-none overflow-hidden">
+    <div className="bg-slate-900 flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
         <div className="flex items-center gap-2">

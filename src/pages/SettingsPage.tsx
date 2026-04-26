@@ -870,7 +870,7 @@ function TabPermisos({ allPermissions, loading, roles, rolesLoading }: { allPerm
 }
 
 // ─── Tab Flags ────────────────────────────────────────────────────────────────
-interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
+interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; showCategoryFilters?: boolean; posLayout?: 'grid' | 'columns'; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
 
 function FlagToggle({ label, description, value, onChange, saving }: {
   label: string; description: string; value: boolean;
@@ -1092,6 +1092,58 @@ function TabFlags({ token }: { token: string }) {
           onChange={v => toggle('showCustomerLookup', v)}
           saving={saving}
         />
+        <FlagToggle
+          label="Mostrar filtros de categoría en el POS"
+          description="Muestra los chips de categorías arriba de la lista de productos para filtrar. Desactívalo para ganar espacio vertical en pantallas pequeñas."
+          value={settings.showCategoryFilters !== false}
+          onChange={v => toggle('showCategoryFilters', v)}
+          saving={saving}
+        />
+      </div>
+
+      {/* Selector de layout del POS */}
+      <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">🗂️</span>
+          <div>
+            <p className="text-white font-semibold text-sm">Vista de productos en el POS</p>
+            <p className="text-slate-500 text-xs mt-0.5">Define cómo se distribuyen los productos en la pantalla principal</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => saveSettings({ posLayout: 'grid' }, 'Vista en filas activada')}
+            disabled={saving}
+            className={`flex flex-col items-center gap-2 px-3 py-3 rounded-xl border transition disabled:opacity-50 ${
+              (settings.posLayout ?? 'grid') === 'grid'
+                ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                : 'bg-slate-700/40 border-slate-600 text-slate-400 hover:text-white'
+            }`}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+            <span className="text-xs font-bold">Filas</span>
+            <span className="text-[10px] opacity-70 text-center leading-tight">Productos en grilla por categoría</span>
+          </button>
+          <button
+            onClick={() => saveSettings({ posLayout: 'columns' }, 'Vista en columnas activada')}
+            disabled={saving}
+            className={`flex flex-col items-center gap-2 px-3 py-3 rounded-xl border transition disabled:opacity-50 ${
+              settings.posLayout === 'columns'
+                ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                : 'bg-slate-700/40 border-slate-600 text-slate-400 hover:text-white'
+            }`}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="8" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="16" y2="21"/>
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+            </svg>
+            <span className="text-xs font-bold">Columnas</span>
+            <span className="text-[10px] opacity-70 text-center leading-tight">Una columna por categoría (lista)</span>
+          </button>
+        </div>
       </div>
 
       {/* Impresora térmica */}

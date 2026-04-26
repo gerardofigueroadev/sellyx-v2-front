@@ -98,25 +98,19 @@ function UserPopover({ onClose }: { onClose: () => void }) {
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const { user, hasPermission, branches, activeBranchId, setActiveBranchId } = useAuth();
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1440);
+  const [collapsed, setCollapsed] = useState(() => {
+    const stored = localStorage.getItem('sidebar_collapsed');
+    if (stored !== null) return stored === 'true';
+    return true;
+  });
   const [popoverOpen, setPopoverOpen] = useState(false);
 
-  // Auto-collapse/expand on resize, but only when user hasn't manually toggled
-  // (we track this with a ref so resize doesn't fight the toggle button)
-  const manuallyToggled = useRef(false);
-  useEffect(() => {
-    const handle = () => {
-      if (!manuallyToggled.current) {
-        setCollapsed(window.innerWidth < 1440);
-      }
-    };
-    window.addEventListener('resize', handle);
-    return () => window.removeEventListener('resize', handle);
-  }, []);
-
   const toggle = () => {
-    manuallyToggled.current = true;
-    setCollapsed(c => !c);
+    setCollapsed(c => {
+      const next = !c;
+      localStorage.setItem('sidebar_collapsed', String(next));
+      return next;
+    });
   };
 
   const isSuperAdmin = user?.role === 'superadmin';
