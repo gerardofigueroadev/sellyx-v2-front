@@ -87,11 +87,11 @@ export function KitchenTicket({ d }: { d: OrderTicketData }) {
         <div style={{ fontSize: '17px' }}>*** COCINA ***</div>
         <div style={{ fontSize: '28px' }}>#{d.ticketNumber}</div>
         {d.orderType && (
-          <div style={{ fontSize: '16px', border: '2px solid #000', display: 'inline-block', padding: '1px 8px', marginTop: '2px' }}>
-            {d.orderType === 'takeaway' ? 'PARA LLEVAR' : 'PARA MESA'}
+          <div style={{ fontSize: '20px', border: '2px solid #000', display: 'inline-block', padding: '1px 8px', marginTop: '2px' }}>
+            {d.orderType === 'takeaway' ? 'PARA LLEVAR' : 'MESA'}
           </div>
         )}
-        <div style={{ fontSize: '12px', marginTop: '2px' }}>
+        <div style={{ fontSize: '16px', marginTop: '2px' }}>
           {new Date(d.createdAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>

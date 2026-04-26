@@ -48,6 +48,8 @@ interface AuthContextType {
   hasPermission: (permission: string) => boolean;
   refreshSubscription: () => Promise<void>;
   refreshOrgSettings: () => Promise<void>;
+  /** Devuelve el access token vigente, renovándolo automáticamente si expiró */
+  getValidToken: () => Promise<string | null>;
   currency: string;
   enabledPaymentMethods: string[];
   // Branch selection (admin with multiple branches)
@@ -141,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       localStorage.setItem('token', data.access_token);
+      if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
       localStorage.setItem('user', JSON.stringify(data.user));
       setToken(data.access_token);
       setUser(data.user);
@@ -163,8 +166,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const getValidToken = async (): Promise<string | null> => {
+    if (!token) return null;
+
+    // Decodifica el payload del JWT para verificar expiración (sin librería externa)
+    try {
+      const [, payload] = token.split('.');
+      const { exp } = JSON.parse(atob(payload));
+      const isExpired = Date.now() >= exp * 1000 - 60_000; // 60s de margen
+      if (!isExpired) return token;
+    } catch {
+      return token; // Si no se puede decodificar, lo intentamos igual
+    }
+
+    // Token expirado: intentar renovar con refresh token
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (!refreshToken) return null;
+
+    try {
+      const res = await fetch(`${API_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      localStorage.setItem('token', data.access_token);
+      setToken(data.access_token);
+      return data.access_token;
+    } catch {
+      return null;
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     localStorage.removeItem('pos_currency');
     localStorage.removeItem('pos_payment_methods');
@@ -200,7 +237,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       isAuthenticated, user, token, login, logout, hasPermission,
-      refreshSubscription, refreshOrgSettings,
+      refreshSubscription, refreshOrgSettings, getValidToken,
       currency, enabledPaymentMethods,
       branches, activeBranchId, setActiveBranchId,
     }}>

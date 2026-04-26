@@ -8,6 +8,8 @@ interface ProductCardProps {
   quantity?: number;
   categoryColor?: string;
   categoryName?: string;
+  showEmoji?: boolean;
+  compact?: boolean;
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -23,7 +25,7 @@ const BG_MAP: Record<string, string> = {
   pink:   'rgba(236,72,153,0.07)', cyan:   'rgba(6,182,212,0.07)',
 };
 
-export default function ProductCard({ product, onAdd, quantity = 0, categoryColor }: ProductCardProps) {
+export default function ProductCard({ product, onAdd, quantity = 0, categoryColor, showEmoji = true, compact = false }: ProductCardProps) {
   const { currency } = useAuth();
   const [flash, setFlash] = useState(false);
   const accent = categoryColor ? (COLOR_MAP[categoryColor] ?? '#3b82f6') : undefined;
@@ -68,9 +70,11 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
       )}
 
       {/* Emoji */}
-      <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0, width: 28, textAlign: 'center' }}>
-        {product.emoji || '🍽️'}
-      </span>
+      {showEmoji && (
+        <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0, width: 28, textAlign: 'center' }}>
+          {product.emoji || '🍽️'}
+        </span>
+      )}
 
       {/* Info */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -83,32 +87,58 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
         }}>
           {product.name}
         </p>
-        {/* Precio */}
-        <p style={{
-          fontSize: 13, fontWeight: 700, marginTop: 4,
-          color: product.isAvailable ? '#60a5fa' : '#475569',
-          margin: '4px 0 0',
-        }}>
-          {currency} {Number(product.price).toFixed(2)}
-        </p>
-      </div>
-
-      {/* + / cantidad */}
-      <div style={{
-        flexShrink: 0, width: 30, height: 30, borderRadius: 8,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: quantity > 0 ? (accent ?? '#2563eb') : flash ? '#3b82f6' : 'rgba(51,65,85,0.8)',
-        color: quantity > 0 || flash ? 'white' : '#94a3b8',
-        fontSize: 13, fontWeight: 800,
-        transition: 'background 0.1s',
-        boxShadow: quantity > 0 ? `0 0 8px ${accent ?? '#2563eb'}66` : 'none',
-      }}>
-        {quantity > 0 ? quantity : (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ width: 14, height: 14 }}>
-            <path strokeLinecap="round" d="M12 5v14M5 12h14" />
-          </svg>
+        {/* Precio — solo en modo expandido */}
+        {!compact && (
+          <p style={{
+            fontSize: 13, fontWeight: 700, marginTop: 4,
+            color: product.isAvailable ? '#60a5fa' : '#475569',
+            margin: '4px 0 0',
+          }}>
+            {currency} {Number(product.price).toFixed(2)}
+          </p>
         )}
       </div>
+
+      {compact ? (
+        /* Modo compact: precio a la derecha + badge de cantidad si > 0 */
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {quantity > 0 && (
+            <span style={{
+              minWidth: 22, height: 22, padding: '0 6px', borderRadius: 11,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: accent ?? '#2563eb',
+              color: 'white', fontSize: 11, fontWeight: 800,
+              boxShadow: `0 0 6px ${accent ?? '#2563eb'}66`,
+            }}>
+              ×{quantity}
+            </span>
+          )}
+          <span style={{
+            fontSize: 13, fontWeight: 700,
+            color: product.isAvailable ? '#60a5fa' : '#475569',
+            whiteSpace: 'nowrap',
+          }}>
+            {currency} {Number(product.price).toFixed(2)}
+          </span>
+        </div>
+      ) : (
+        /* + / cantidad */
+        <div style={{
+          flexShrink: 0, width: 30, height: 30, borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: quantity > 0 ? (accent ?? '#2563eb') : flash ? '#3b82f6' : 'rgba(51,65,85,0.8)',
+          color: quantity > 0 || flash ? 'white' : '#94a3b8',
+          fontSize: 13, fontWeight: 800,
+          transition: 'background 0.1s',
+          boxShadow: quantity > 0 ? `0 0 8px ${accent ?? '#2563eb'}66` : 'none',
+        }}>
+          {quantity > 0 ? quantity : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ width: 14, height: 14 }}>
+              <path strokeLinecap="round" d="M12 5v14M5 12h14" />
+            </svg>
+          )}
+        </div>
+      )}
 
       {flash && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: accent ?? '#3b82f6' }} />}
     </button>

@@ -1,7 +1,6 @@
 import { useState, ReactElement } from 'react';
 import Sidebar from '../components/Sidebar';
 import HomePage from '../pages/HomePage';
-import PlaceholderPage from '../pages/PlaceholderPage';
 import SettingsPage from '../pages/SettingsPage';
 import OrdersPage from '../pages/OrdersPage';
 import ShiftsPage from '../pages/ShiftsPage';
@@ -11,6 +10,7 @@ import SubscriptionsPage from '../pages/SubscriptionsPage';
 import OrganizationsAdminPage from '../pages/OrganizationsAdminPage';
 import ReportsPage from '../pages/ReportsPage';
 import QrPaymentPage from '../pages/QrPaymentPage';
+import CustomersPage from '../pages/CustomersPage';
 import { useAuth } from '../context/AuthContext';
 
 const pages: Record<string, ReactElement> = {
@@ -20,7 +20,7 @@ const pages: Record<string, ReactElement> = {
   products:      <ProductsPage />,
   categories:    <CategoriesPage />,
   reports:       <ReportsPage />,
-  customers:     <PlaceholderPage title="Clientes" icon="👥" />,
+  customers:     <CustomersPage />,
   qrpayment:     <QrPaymentPage />,
   settings:      <SettingsPage />,
   subscriptions:  <SubscriptionsPage />,

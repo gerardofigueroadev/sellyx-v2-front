@@ -1,44 +1,103 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { CartItem } from '../types';
 import { useAuth } from '../context/AuthContext';
+import BASE_URL from '../config';
+import CustomerHistoryModal from './CustomerHistoryModal';
+
+const CART_API = `${BASE_URL}/api`;
 
 export type PaymentMethod = 'cash' | 'card' | 'transfer';
 export type OrderType = 'dine_in' | 'takeaway';
 
 const PAYMENT_OPTIONS: { key: PaymentMethod; emoji: string; label: string; checkoutLabel: string }[] = [
-  { key: 'cash',     emoji: '💵', label: 'Efectivo',          checkoutLabel: '💵 Cobrar en efectivo' },
-  { key: 'card',     emoji: '💳', label: 'Tarjeta',           checkoutLabel: '💳 Cobrar con tarjeta' },
+  { key: 'cash',     emoji: '💵', label: 'Efectivo',           checkoutLabel: '💵 Cobrar en efectivo' },
+  { key: 'card',     emoji: '💳', label: 'Tarjeta',            checkoutLabel: '💳 Cobrar con tarjeta' },
   { key: 'transfer', emoji: '📱', label: 'QR / Transferencia', checkoutLabel: '📱 Cobrar con QR' },
 ];
+
+interface FoundCustomer {
+  id: number;
+  name: string;
+  phone: string;
+}
 
 interface CartProps {
   items: CartItem[];
   onRemove: (id: number) => void;
   onClear: () => void;
-  onCheckout: (paymentMethod: PaymentMethod, orderType: OrderType) => void;
+  onCheckout: (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null, customerPhone: string | null) => void;
   onNoteChange?: (id: number, note: string) => void;
   allowItemNotes?: boolean;
+  showCustomerLookup?: boolean;
 }
 
-export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes }: CartProps) {
-  const { currency, enabledPaymentMethods } = useAuth();
+export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes, showCustomerLookup }: CartProps) {
+  const { currency, enabledPaymentMethods, token } = useAuth();
   const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
   const [orderType, setOrderType] = useState<OrderType>('dine_in');
+
+  // Customer lookup state
+  const [phone,         setPhone]         = useState('');
+  const [foundCustomer, setFoundCustomer] = useState<FoundCustomer | null>(null);
+  const [searching,     setSearching]     = useState(false);
+  const [historyOpen,   setHistoryOpen]   = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const visibleOptions = PAYMENT_OPTIONS.filter(o => enabledPaymentMethods.includes(o.key));
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() =>
     visibleOptions[0]?.key ?? 'cash'
   );
 
-  // If current selection was disabled, reset to first available
   const activeMethod = visibleOptions.find(o => o.key === paymentMethod)
     ? paymentMethod
     : (visibleOptions[0]?.key ?? 'cash');
 
   const total      = items.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
   const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
+  const gridCols   = visibleOptions.length === 1 ? '' : visibleOptions.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
 
-  const gridCols = visibleOptions.length === 1 ? '' : visibleOptions.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
+  // Clear customer state when cart is emptied (after successful checkout)
+  useEffect(() => {
+    if (items.length === 0) {
+      setPhone('');
+      setFoundCustomer(null);
+    }
+  }, [items.length]);
+
+  // Debounced phone search
+  useEffect(() => {
+    if (!showCustomerLookup || !token) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (phone.length < 7) {
+      setFoundCustomer(null);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${CART_API}/customers?phone=${encodeURIComponent(phone)}`, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setFoundCustomer(Array.isArray(data) && data.length > 0 ? data[0] : null);
+        }
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [phone, token, showCustomerLookup]);
+
+  const clearCustomer = () => { setPhone(''); setFoundCustomer(null); };
+
+  const customerDisplayName = foundCustomer
+    ? (foundCustomer.name && foundCustomer.name !== foundCustomer.phone ? foundCustomer.name : foundCustomer.phone)
+    : '';
 
   return (
     <div className="w-full lg:w-64 xl:w-80 2xl:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-700/50 flex flex-col shrink-0 max-h-[40vh] lg:max-h-none overflow-hidden">
@@ -59,6 +118,52 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
           </button>
         )}
       </div>
+
+      {/* Customer lookup row */}
+      {showCustomerLookup && (
+        <div style={{ padding: '8px 12px 10px', borderBottom: '1px solid rgba(71,85,105,0.3)' }}>
+          {foundCustomer ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <button
+                onClick={() => setHistoryOpen(true)}
+                style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', textAlign: 'left', minWidth: 0 }}
+              >
+                <span style={{ fontSize: 14, flexShrink: 0 }}>👤</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ color: '#93c5fd', fontSize: 12, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {customerDisplayName}
+                  </p>
+                  {foundCustomer.name && foundCustomer.name !== foundCustomer.phone && (
+                    <p style={{ color: '#475569', fontSize: 11, margin: 0 }}>{foundCustomer.phone}</p>
+                  )}
+                </div>
+                <span style={{ color: '#475569', fontSize: 11, flexShrink: 0 }}>Ver →</span>
+              </button>
+              <button onClick={clearCustomer} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 18, cursor: 'pointer', lineHeight: 1, flexShrink: 0, padding: 0 }}>×</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <input
+                  value={phone}
+                  onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 15))}
+                  placeholder="📱 Teléfono del cliente"
+                  style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(51,65,85,0.5)', border: '1px solid rgba(71,85,105,0.5)', borderRadius: 8, padding: '6px 10px', color: 'white', fontSize: 13, outline: 'none' }}
+                />
+                {searching && (
+                  <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: 12 }}>···</span>
+                )}
+                {!searching && phone.length >= 7 && (
+                  <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#475569', fontSize: 11 }}>nuevo</span>
+                )}
+              </div>
+              {phone.length > 0 && (
+                <button onClick={clearCustomer} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 18, cursor: 'pointer', lineHeight: 1, flexShrink: 0, padding: 0 }}>×</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Items */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -116,7 +221,6 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
 
       {/* Footer */}
       <div className="p-4 border-t border-slate-700/50 space-y-3">
-        {/* Total */}
         <div className="flex items-center justify-between">
           <span className="text-slate-400 text-sm">Total</span>
           <span className="text-white font-bold text-lg">{currency} {total.toFixed(2)}</span>
@@ -140,7 +244,7 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
           ))}
         </div>
 
-        {/* Método de pago — solo si hay más de uno activo */}
+        {/* Método de pago */}
         {visibleOptions.length > 1 && (
           <div>
             <p className="text-slate-500 text-xs mb-2">Método de pago</p>
@@ -166,12 +270,21 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
         {/* Cobrar */}
         <button
           disabled={items.length === 0}
-          onClick={() => onCheckout(activeMethod, orderType)}
+          onClick={() => onCheckout(activeMethod, orderType, foundCustomer?.id ?? null, phone || null)}
           className="w-full bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition shadow-lg hover:shadow-green-500/20"
         >
           {visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar'}
         </button>
       </div>
+
+      {/* Customer history modal */}
+      {historyOpen && foundCustomer && (
+        <CustomerHistoryModal
+          customerId={foundCustomer.id}
+          onClose={() => setHistoryOpen(false)}
+          onUpdated={updated => setFoundCustomer(prev => prev ? { ...prev, name: updated.name } : prev)}
+        />
+      )}
     </div>
   );
 }

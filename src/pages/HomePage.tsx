@@ -5,6 +5,9 @@ import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
+import { saveOrderToOutbox, markOrderSynced } from '../lib/db';
+import { startSyncService, stopSyncService } from '../lib/syncService';
+import { useSync } from '../hooks/useSync';
 
 import API_URL from '../config';
 import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
@@ -320,7 +323,11 @@ function CloseShiftModal({ onConfirm, onClose }: {
 
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { token, user, hasPermission, activeBranchId, currency } = useAuth();
+  const { token, user, hasPermission, activeBranchId, currency, getValidToken } = useAuth();
+  const isTauri = '__TAURI__' in window;
+  const { isOnline, pendingCount, syncing } = useSync();
+  const [forceOffline] = useState(() => localStorage.getItem('pos_force_offline') === 'true');
+  const isEffectivelyOffline = forceOffline || !isOnline;
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [categories, setCategories] = useState<ApiCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -382,8 +389,24 @@ export default function HomePage() {
         apiFetch(token, `/products/available${qs}`),
         apiFetch(token, `/categories${qs}`),
       ]);
-      if (pRes.ok) setProducts(await pRes.json());
-      if (cRes.ok) setCategories(await cRes.json());
+      if (pRes.ok) {
+        const prods: ApiProduct[] = await pRes.json();
+        setProducts(prods);
+        localStorage.setItem('products_cache', JSON.stringify({ data: prods, cachedAt: Date.now() }));
+      }
+      if (cRes.ok) {
+        const cats: ApiCategory[] = await cRes.json();
+        setCategories(cats);
+        localStorage.setItem('categories_cache', JSON.stringify({ data: cats, cachedAt: Date.now() }));
+      }
+    } catch {
+      // Offline: cargar desde cache
+      try {
+        const pc = localStorage.getItem('products_cache');
+        const cc = localStorage.getItem('categories_cache');
+        if (pc) setProducts(JSON.parse(pc).data ?? []);
+        if (cc) setCategories(JSON.parse(cc).data ?? []);
+      } catch { /* ignore */ }
     } finally {
       setLoading(false);
     }
@@ -395,36 +418,110 @@ export default function HomePage() {
   // Re-fetch shift and kitchen whenever the active branch changes
   useEffect(() => {
     if (!token || !canManageShift) return;
+
+    if (!navigator.onLine || forceOffline) {
+      const cached = localStorage.getItem('pos_active_shift');
+      if (cached) { try { setActiveShift(JSON.parse(cached)); } catch { setActiveShift(null); } }
+      setKitchenKey(k => k + 1);
+      return;
+    }
+
     let cancelled = false;
     const qs = activeBranchId ? `?branchId=${activeBranchId}` : '';
     apiFetch(token, `/shifts/active${qs}`)
       .then(async res => {
         if (cancelled) return;
-        if (!res.ok) { setActiveShift(null); return; }
+        if (!res.ok) {
+          const cached = localStorage.getItem('pos_active_shift');
+          if (cached) { try { if (!cancelled) setActiveShift(JSON.parse(cached)); } catch { if (!cancelled) setActiveShift(null); } }
+          else if (!cancelled) setActiveShift(null);
+          return;
+        }
         const text = await res.text();
         const data = text ? JSON.parse(text) : null;
-        if (!cancelled) setActiveShift(data ?? null);
+        if (!cancelled) {
+          setActiveShift(data ?? null);
+          if (data) localStorage.setItem('pos_active_shift', JSON.stringify(data));
+          else localStorage.removeItem('pos_active_shift');
+        }
       })
-      .catch(() => { if (!cancelled) setActiveShift(null); });
+      .catch(() => {
+        if (!cancelled) {
+          const cached = localStorage.getItem('pos_active_shift');
+          if (cached) { try { setActiveShift(JSON.parse(cached)); } catch { setActiveShift(null); } }
+        }
+      });
     setKitchenKey(k => k + 1);
     return () => { cancelled = true; };
-  }, [activeBranchId, token, canManageShift]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeBranchId, token, canManageShift, forceOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sincronizar apertura de caja pendiente cuando vuelve la conexión
+  useEffect(() => {
+    if (!isOnline || forceOffline || !token || !activeShift || activeShift.id !== -1) return;
+    const pending = localStorage.getItem('pos_pending_shift_open');
+    if (!pending) return;
+    apiFetch(token, '/shifts/open', { method: 'POST', body: pending })
+      .then(async res => {
+        if (!res.ok) return;
+        const data = await res.json();
+        setActiveShift(data);
+        localStorage.setItem('pos_active_shift', JSON.stringify(data));
+        localStorage.removeItem('pos_pending_shift_open');
+      })
+      .catch(() => {});
+  }, [isOnline, forceOffline, token, activeShift?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cargar settings una sola vez al montar
   useEffect(() => {
     if (!token) return;
-    apiFetch(token, '/organizations/my/settings').then(r => r.json()).then(setOrgSettings);
+    apiFetch(token, '/organizations/my/settings')
+      .then(r => r.ok ? r.json() : null)
+      .then(s => { if (s) setOrgSettings(s); })
+      .catch(() => {});
   }, [token]);
+
+  // Servicio de sincronización offline (solo en Tauri)
+  useEffect(() => {
+    if (!isTauri || !token) return;
+    startSyncService(getValidToken, API);
+    return () => stopSyncService();
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenShift = async (amount: number, notes: string) => {
     setShiftLoading(true); setShiftError('');
+
+    if (!navigator.onLine || forceOffline) {
+      const localShift: Shift = {
+        id: -1,
+        type: 'pos',
+        status: 'open',
+        openingAmount: amount,
+        openedAt: new Date().toISOString(),
+        user: user ? { id: user.id, name: user.name } : null,
+      };
+      localStorage.setItem('pos_active_shift', JSON.stringify(localShift));
+      localStorage.setItem('pos_pending_shift_open', JSON.stringify({
+        openingAmount: amount, notes,
+        ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}),
+      }));
+      setActiveShift(localShift);
+      setShowOpenModal(false);
+      setShiftLoading(false);
+      return;
+    }
+
     const res = await apiFetch(token!, '/shifts/open', {
       method: 'POST',
       body: JSON.stringify({ openingAmount: amount, notes, ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}) }),
     });
     const data = await res.json();
-    if (res.ok) { setActiveShift(data); setShowOpenModal(false); }
-    else setShiftError(data.message ?? 'Error al abrir caja');
+    if (res.ok) {
+      setActiveShift(data);
+      localStorage.setItem('pos_active_shift', JSON.stringify(data));
+      setShowOpenModal(false);
+    } else {
+      setShiftError(data.message ?? 'Error al abrir caja');
+    }
     setShiftLoading(false);
   };
 
@@ -439,6 +536,8 @@ export default function HomePage() {
     if (res.ok) {
       const closedShiftId = activeShift.id;
       setActiveShift(null);
+      localStorage.removeItem('pos_active_shift');
+      localStorage.removeItem('pos_pending_shift_open');
       setShowCloseModal(false);
       setKitchenKey(k => k + 1);
 
@@ -470,7 +569,7 @@ export default function HomePage() {
 
   const handleRemove = (id: number) => setCartItems(prev => prev.filter(i => i.id !== id));
 
-  const handleCheckout = async (paymentMethod: PaymentMethod, orderType: OrderType) => {
+  const handleCheckout = async (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null = null, customerPhone: string | null = null) => {
     if (!token || cartItems.length === 0) return;
 
     // POS requiere turno activo
@@ -480,51 +579,117 @@ export default function HomePage() {
       return;
     }
 
-    const body = {
+    const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
+    const localId = crypto.randomUUID();
+    const clientCreatedAt = new Date().toISOString();
+
+    // Intentar crear cliente solo cuando hay conexión
+    let resolvedCustomerId = customerId;
+    if (!resolvedCustomerId && customerPhone && !isEffectivelyOffline) {
+      try {
+        const customerRes = await apiFetch(token, '/customers', {
+          method: 'POST',
+          body: JSON.stringify({ phone: customerPhone }),
+        });
+        if (customerRes.ok) resolvedCustomerId = (await customerRes.json()).id;
+      } catch { /* offline, skip */ }
+    }
+
+    const payload = {
+      localId,
+      clientCreatedAt,
+      shiftId: activeShift.id,
       channel: 'pos',
       paymentMethod,
       orderType,
-      items: cartItems.map(i => ({ productId: i.id, quantity: i.quantity, ...(i.note ? { notes: i.note } : {}) })),
+      items: cartItems.map(i => ({
+        productId:   i.id,
+        quantity:    i.quantity,
+        unitPrice:   Number(i.price),
+        productName: i.name,
+        ...(i.note ? { notes: i.note } : {}),
+      })),
+      ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
       ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}),
     };
 
-    const res = await apiFetch(token, '/orders', { method: 'POST', body: JSON.stringify(body) });
-    if (res.ok) {
-      const order = await res.json();
-      const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
-      setCheckoutMsg(`✅ Venta registrada — ${currency} ${total.toFixed(2)}`);
-      setCartItems([]);
-      setKitchenKey(k => k + 1);
-
-      // Auto-print: siempre arranca con el ticket del cliente
-      // Si autoPrintTicketOnOrder está activo, después imprime el de cocina
-      const ticketData: OrderTicketData = {
-        ticketNumber:  order.ticketNumber,
-        orderNumber:   order.orderNumber,
-        paymentMethod: paymentMethod,
-        items: (order.items ?? []).map((item: any) => ({
-          name:      item.product?.name ?? '—',
-          quantity:  item.quantity,
-          unitPrice: parseFloat(item.unitPrice),
-          subtotal:  parseFloat(item.subtotal),
-          notes:     item.notes ?? undefined,
-        })),
-        total:       parseFloat(order.total),
-        notes:       order.notes ?? undefined,
-        branchName:  order.branch?.name ?? (user as any)?.branch?.name ?? '',
-        orgName,
-        cashierName: (user as any)?.name,
-        createdAt:   order.createdAt ?? new Date().toISOString(),
-        currency,
-        orderType:   order.orderType ?? orderType,
-      };
-      setPrintTicket(ticketData);
-      setPrintPhase('client');
-    } else {
-      const d = await res.json();
-      setCheckoutMsg(`⚠️ ${d.message ?? 'Error al registrar venta'}`);
+    // Guardar en outbox PRIMERO — garantía de que no se pierde aunque se corte la conexión
+    if (isTauri) {
+      await saveOrderToOutbox(localId, payload).catch(() => {});
     }
-    setTimeout(() => setCheckoutMsg(''), 3000);
+
+    let serverOrder: any = null;
+    try {
+      const res = await apiFetch(token, '/orders', { method: 'POST', body: JSON.stringify(payload) });
+      if (res.ok) {
+        serverOrder = await res.json();
+        if (isTauri) await markOrderSynced(localId, serverOrder.id).catch(() => {});
+      } else {
+        const d = await res.json().catch(() => ({}));
+        if (!isTauri) {
+          setCheckoutMsg(`⚠️ ${d.message ?? 'Error al registrar venta'}`);
+          setTimeout(() => setCheckoutMsg(''), 3000);
+          return;
+        }
+      }
+    } catch { /* error de red — la orden queda en outbox para sync posterior */ }
+
+    // Construir ticket con datos del servidor o con datos locales (modo offline)
+    const ticketData: OrderTicketData = serverOrder
+      ? {
+          ticketNumber:  serverOrder.ticketNumber,
+          orderNumber:   serverOrder.orderNumber,
+          paymentMethod,
+          items: (serverOrder.items ?? []).map((item: any) => ({
+            name:      item.product?.name ?? item.productName ?? '—',
+            quantity:  item.quantity,
+            unitPrice: parseFloat(item.unitPrice),
+            subtotal:  parseFloat(item.subtotal),
+            notes:     item.notes ?? undefined,
+          })),
+          total:       parseFloat(serverOrder.total),
+          notes:       serverOrder.notes ?? undefined,
+          branchName:  serverOrder.branch?.name ?? (user as any)?.branch?.name ?? '',
+          orgName,
+          cashierName: (user as any)?.name,
+          createdAt:   serverOrder.createdAt ?? clientCreatedAt,
+          currency,
+          orderType:   serverOrder.orderType ?? orderType,
+        }
+      : {
+          // Ticket local cuando offline
+          ticketNumber:  parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1,
+          orderNumber:   `LOCAL-${localId.slice(0, 8).toUpperCase()}`,
+          paymentMethod,
+          items: cartItems.map(i => ({
+            name:      i.name,
+            quantity:  i.quantity,
+            unitPrice: Number(i.price),
+            subtotal:  Number(i.price) * i.quantity,
+          })),
+          total,
+          branchName:  (user as any)?.branch?.name ?? '',
+          orgName,
+          cashierName: (user as any)?.name,
+          createdAt:   clientCreatedAt,
+          currency,
+          orderType,
+        };
+
+    if (!serverOrder) {
+      const nextTicket = parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1;
+      localStorage.setItem('last_offline_ticket', String(nextTicket));
+    }
+
+    setCheckoutMsg(serverOrder
+      ? `✅ Venta registrada — ${currency} ${total.toFixed(2)}`
+      : `📦 Sin conexión — guardada (${currency} ${total.toFixed(2)})`
+    );
+    setCartItems([]);
+    if (serverOrder) setKitchenKey(k => k + 1);
+    setPrintTicket(ticketData);
+    setPrintPhase('client');
+    setTimeout(() => setCheckoutMsg(''), 4000);
   };
 
   const shiftTime = activeShift
@@ -605,10 +770,30 @@ export default function HomePage() {
         )}
 
         <div className="flex items-center gap-4 shrink-0">
+          {/* Indicador offline / sync */}
+          {isEffectivelyOffline && (
+            <div className="flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 rounded-lg text-xs text-amber-300 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+              {forceOffline ? 'Modo sin conexión' : 'Sin conexión'}{pendingCount > 0 ? ` · ${pendingCount} pendiente${pendingCount !== 1 ? 's' : ''}` : ''}
+            </div>
+          )}
+          {!isEffectivelyOffline && syncing && (
+            <div className="flex items-center gap-1.5 bg-blue-500/15 border border-blue-500/30 px-3 py-1.5 rounded-lg text-xs text-blue-300 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse inline-block" />
+              Sincronizando...
+            </div>
+          )}
+          {!isEffectivelyOffline && !syncing && pendingCount > 0 && (
+            <div className="flex items-center gap-1.5 bg-green-500/15 border border-green-500/30 px-3 py-1.5 rounded-lg text-xs text-green-300 font-medium">
+              ↑ {pendingCount} por sincronizar
+            </div>
+          )}
           {checkoutMsg && (
             <div className={`border px-4 py-2 rounded-xl text-sm font-medium ${checkoutMsg.startsWith('⚠️')
               ? 'bg-red-500/20 border-red-500/30 text-red-300'
-              : 'bg-green-500/20 border-green-500/30 text-green-300'}`}>
+              : checkoutMsg.startsWith('📦')
+                ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                : 'bg-green-500/20 border-green-500/30 text-green-300'}`}>
               {checkoutMsg}
             </div>
           )}
@@ -735,6 +920,8 @@ export default function HomePage() {
                             key={p.id} product={p} onAdd={handleAdd}
                             quantity={cartItems.find(i => i.id === p.id)?.quantity ?? 0}
                             categoryColor={cat.color}
+                            showEmoji={orgSettings.showProductEmoji !== false}
+                            compact
                           />
                         ))}
                       </div>
@@ -763,6 +950,7 @@ export default function HomePage() {
                           key={p.id} product={p} onAdd={handleAdd}
                           quantity={cartItems.find(i => i.id === p.id)?.quantity ?? 0}
                           categoryColor={cat.color}
+                          showEmoji={orgSettings.showProductEmoji !== false}
                         />
                       ))}
                     </div>
@@ -789,8 +977,9 @@ export default function HomePage() {
           items={cartItems}
           onRemove={handleRemove}
           onClear={() => setCartItems([])}
-          onCheckout={(pm, ot) => handleCheckout(pm, ot)}
+          onCheckout={(pm, ot, cid, cphone) => handleCheckout(pm, ot, cid, cphone)}
           allowItemNotes={!!orgSettings.allowItemNotes}
+          showCustomerLookup={!!orgSettings.showCustomerLookup}
           onNoteChange={(id, note) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, note } : i))}
         />
       </div>

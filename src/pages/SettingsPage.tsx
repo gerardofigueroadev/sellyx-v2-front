@@ -870,7 +870,7 @@ function TabPermisos({ allPermissions, loading, roles, rolesLoading }: { allPerm
 }
 
 // ─── Tab Flags ────────────────────────────────────────────────────────────────
-interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
+interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
 
 function FlagToggle({ label, description, value, onChange, saving }: {
   label: string; description: string; value: boolean;
@@ -1078,6 +1078,20 @@ function TabFlags({ token }: { token: string }) {
           onChange={v => toggle('allowVoids', v)}
           saving={saving}
         />
+        <FlagToggle
+          label="Mostrar íconos de productos en el POS"
+          description="Muestra el emoji de cada producto en la lista del punto de venta. Desactívalo para una vista más compacta y sencilla."
+          value={settings.showProductEmoji !== false}
+          onChange={v => toggle('showProductEmoji', v)}
+          saving={saving}
+        />
+        <FlagToggle
+          label="Asociar cliente por teléfono en el POS"
+          description="Muestra un campo de teléfono en el carrito para vincular la venta a un cliente. Permite ver su historial de pedidos y editar su nombre."
+          value={!!settings.showCustomerLookup}
+          onChange={v => toggle('showCustomerLookup', v)}
+          saving={saving}
+        />
       </div>
 
       {/* Impresora térmica */}
@@ -1090,6 +1104,51 @@ function TabFlags({ token }: { token: string }) {
         saving={saving}
         onSave={saveTimings}
       />
+
+      {/* Modo sin conexión (local del dispositivo) */}
+      <OfflineModeCard />
+    </div>
+  );
+}
+
+// ─── Offline Mode Card ────────────────────────────────────────────────────────
+function OfflineModeCard() {
+  const [enabled, setEnabled] = useState(() => localStorage.getItem('pos_force_offline') === 'true');
+
+  const toggle = () => {
+    const next = !enabled;
+    localStorage.setItem('pos_force_offline', String(next));
+    setEnabled(next);
+  };
+
+  return (
+    <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+      <div className="flex items-center gap-3">
+        <span className="text-2xl">📡</span>
+        <div>
+          <p className="text-white font-semibold text-sm">Modo sin conexión</p>
+          <p className="text-slate-500 text-xs mt-0.5">Configuración local de este dispositivo</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-between bg-slate-700/30 rounded-xl px-4 py-3 gap-4">
+        <div className="min-w-0">
+          <p className="text-white text-sm font-medium">Trabajar sin conexión</p>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Las ventas se guardan localmente y se sincronizan automáticamente cuando desactives esta opción y haya internet.
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-amber-500' : 'bg-slate-600'}`}
+        >
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+        </button>
+      </div>
+      {enabled && (
+        <p className="text-amber-400 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+          ⚠️ Modo sin conexión activo — las ventas no se envían al servidor hasta que lo desactives.
+        </p>
+      )}
     </div>
   );
 }

@@ -194,6 +194,7 @@ export default function ProductsPage() {
 
   // Selected branch for filtering (admin can switch, others fixed to their branch)
   const [filterBranchId, setFilterBranchId] = useState<number | null>(activeBranchId);
+  const [filterCategoryId, setFilterCategoryId] = useState<number | null>(null);
 
   // Sync with activeBranchId; admin without a fixed branch defaults to the first available branch
   useEffect(() => {
@@ -292,7 +293,8 @@ export default function ProductsPage() {
   };
 
   const filtered = products.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase())
+    p.name.toLowerCase().includes(search.toLowerCase()) &&
+    (filterCategoryId === null || p.category?.id === filterCategoryId)
   );
 
   if (loading) return (
@@ -339,7 +341,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 px-6 py-3 border-b border-slate-700/50 shrink-0">
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-slate-700/50 shrink-0 flex-wrap">
 
         {/* Branch dropdown — only admin with multiple branches */}
         {isAdmin && (
@@ -365,6 +367,36 @@ export default function ProductsPage() {
             className="bg-slate-700/50 border border-slate-600 rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
           />
         </div>
+
+        {/* Category pills */}
+        {categories.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0">
+            <button
+              onClick={() => setFilterCategoryId(null)}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                filterCategoryId === null
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-slate-700/50 border-slate-600 text-slate-400 hover:text-white'
+              }`}
+            >
+              Todas
+            </button>
+            {categories.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setFilterCategoryId(filterCategoryId === cat.id ? null : cat.id)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition whitespace-nowrap ${
+                  filterCategoryId === cat.id
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-slate-700/50 border-slate-600 text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>{cat.emoji || '🍽️'}</span>
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Grid */}
