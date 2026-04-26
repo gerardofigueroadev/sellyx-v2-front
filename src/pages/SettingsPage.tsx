@@ -870,7 +870,7 @@ function TabPermisos({ allPermissions, loading, roles, rolesLoading }: { allPerm
 }
 
 // ─── Tab Flags ────────────────────────────────────────────────────────────────
-interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; showCategoryFilters?: boolean; posLayout?: 'grid' | 'columns'; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
+interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; kitchenStripPosition?: 'bottom' | 'right'; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; showCategoryFilters?: boolean; posLayout?: 'grid' | 'columns'; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
 
 function FlagToggle({ label, description, value, onChange, saving }: {
   label: string; description: string; value: boolean;
@@ -1100,6 +1100,55 @@ function TabFlags({ token }: { token: string }) {
           saving={saving}
         />
       </div>
+
+      {/* Selector de posición de la cola de cocina */}
+      {!!settings.showKitchenStrip && (
+        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🍳</span>
+            <div>
+              <p className="text-white font-semibold text-sm">Posición de la cola de cocina</p>
+              <p className="text-slate-500 text-xs mt-0.5">Define dónde aparece la franja con los pedidos pendientes en el POS</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => saveSettings({ kitchenStripPosition: 'bottom' }, 'Cola de cocina abajo')}
+              disabled={saving}
+              className={`flex flex-col items-center gap-2 px-3 py-3 rounded-xl border transition disabled:opacity-50 ${
+                (settings.kitchenStripPosition ?? 'bottom') === 'bottom'
+                  ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                  : 'bg-slate-700/40 border-slate-600 text-slate-400 hover:text-white'
+              }`}
+            >
+              <svg width="32" height="22" viewBox="0 0 32 22" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="1" y="1" width="22" height="14" rx="1.5"/>
+                <rect x="24" y="1" width="7" height="20" rx="1.5"/>
+                <rect x="1" y="16" width="22" height="5" rx="1.5" fill="currentColor" fillOpacity="0.3"/>
+              </svg>
+              <span className="text-xs font-bold">Abajo</span>
+              <span className="text-[10px] opacity-70 text-center leading-tight">Franja horizontal debajo de los productos</span>
+            </button>
+            <button
+              onClick={() => saveSettings({ kitchenStripPosition: 'right' }, 'Cola de cocina al lado del POS')}
+              disabled={saving}
+              className={`flex flex-col items-center gap-2 px-3 py-3 rounded-xl border transition disabled:opacity-50 ${
+                settings.kitchenStripPosition === 'right'
+                  ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                  : 'bg-slate-700/40 border-slate-600 text-slate-400 hover:text-white'
+              }`}
+            >
+              <svg width="32" height="22" viewBox="0 0 32 22" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="1" y="1" width="16" height="20" rx="1.5"/>
+                <rect x="18" y="1" width="6" height="20" rx="1.5" fill="currentColor" fillOpacity="0.3"/>
+                <rect x="25" y="1" width="6" height="20" rx="1.5"/>
+              </svg>
+              <span className="text-xs font-bold">Al lado del POS</span>
+              <span className="text-[10px] opacity-70 text-center leading-tight">Columna vertical junto al carrito de orden</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Selector de layout del POS */}
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">

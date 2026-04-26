@@ -52,9 +52,9 @@ function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins }: {
+function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
-  warningMins: number; dangerMins: number;
+  warningMins: number; dangerMins: number; vertical?: boolean;
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [completing, setCompleting] = useState<number | null>(null);
@@ -88,10 +88,22 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     setCompleting(null);
   };
 
+  const containerClass = vertical
+    ? 'flex flex-col flex-1 min-h-0 bg-slate-900'
+    : 'shrink-0 border-t border-slate-700/50 bg-slate-900';
+
+  const cardsContainerClass = vertical
+    ? 'flex flex-col gap-2 overflow-y-auto px-2 pb-2.5 pt-0.5 flex-1 min-h-0'
+    : 'flex gap-2 overflow-x-auto px-4 pb-2.5 pt-0.5';
+
+  const cardClass = vertical
+    ? 'w-full rounded-lg border px-2.5 py-2 flex flex-col gap-1.5'
+    : 'shrink-0 w-36 xl:w-44 rounded-lg border px-2 xl:px-2.5 py-1.5 xl:py-2 flex flex-col gap-1 xl:gap-1.5';
+
   return (
-    <div className="shrink-0 border-t border-slate-700/50 bg-slate-900">
+    <div className={containerClass}>
       {/* Strip header */}
-      <div className="flex items-center justify-between px-4 pt-1.5 pb-1">
+      <div className="flex items-center justify-between px-3 pt-1.5 pb-1 shrink-0">
         <div className="flex items-center gap-1.5">
           <span className="text-sm">🍳</span>
           <span className="text-slate-400 text-xs font-semibold">Cola de cocina</span>
@@ -103,31 +115,32 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
         </div>
         <div className="flex items-center gap-2">
           <button onClick={load} className="text-slate-600 hover:text-slate-400 text-xs transition">↻</button>
-          <button
-            onClick={() => setCollapsed(c => !c)}
-            className="flex items-center gap-1 text-slate-500 hover:text-slate-300 text-xs font-medium transition px-2 py-0.5 rounded hover:bg-slate-700/50"
-          >
-            {collapsed ? (
-              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3"><path strokeLinecap="round" d="M5 15l7-7 7 7"/></svg> Mostrar</>
-            ) : (
-              <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3"><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> Minimizar</>
-            )}
-          </button>
+          {!vertical && (
+            <button
+              onClick={() => setCollapsed(c => !c)}
+              className="flex items-center gap-1 text-slate-500 hover:text-slate-300 text-xs font-medium transition px-2 py-0.5 rounded hover:bg-slate-700/50"
+            >
+              {collapsed ? (
+                <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3"><path strokeLinecap="round" d="M5 15l7-7 7 7"/></svg> Mostrar</>
+              ) : (
+                <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3"><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> Minimizar</>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Cards */}
-      {!collapsed && <div className="flex gap-2 overflow-x-auto px-4 pb-2.5 pt-0.5">
+      {(vertical || !collapsed) && <div className={cardsContainerClass}>
         {orders.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center py-2 text-slate-600 text-xs">
+          <div className={`${vertical ? 'flex-1' : 'flex-1'} flex items-center justify-center py-2 text-slate-600 text-xs`}>
             Sin pedidos pendientes
           </div>
         ) : (
           orders.map(order => {
             const style = urgencyStyle(order.createdAt, warningMins, dangerMins);
             return (
-              <div key={order.id}
-                className={`shrink-0 w-36 xl:w-44 rounded-lg border px-2 xl:px-2.5 py-1.5 xl:py-2 flex flex-col gap-1 xl:gap-1.5 ${style.card}`}>
+              <div key={order.id} className={`${cardClass} ${style.card}`}>
                 {/* Card header */}
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-white text-sm font-black">#{order.ticketNumber}</span>
@@ -850,8 +863,8 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* Kitchen strip */}
-          {token && !!orgSettings.showKitchenStrip && (
+          {/* Kitchen strip — abajo (default) */}
+          {token && !!orgSettings.showKitchenStrip && orgSettings.kitchenStripPosition !== 'right' && (
             <KitchenStrip
               token={token}
               refreshKey={kitchenKey}
@@ -862,6 +875,21 @@ export default function HomePage() {
             />
           )}
         </div>
+
+        {/* ── Cola de cocina vertical (columna entre productos y cart) ── */}
+        {token && !!orgSettings.showKitchenStrip && orgSettings.kitchenStripPosition === 'right' && (
+          <div className="hidden lg:flex w-48 xl:w-56 shrink-0 flex-col border-l border-slate-700/50 overflow-hidden">
+            <KitchenStrip
+              token={token}
+              refreshKey={kitchenKey}
+              onComplete={() => setKitchenKey(k => k + 1)}
+              branchId={activeBranchId}
+              warningMins={Number(orgSettings.kitchenWarningMins ?? 5)}
+              dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
+              vertical
+            />
+          </div>
+        )}
 
         {/* ── Columna derecha: topbar + Cart ── */}
         <div className="w-full lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] lg:max-h-none border-t lg:border-t-0 lg:border-l border-slate-700/50 overflow-hidden">
