@@ -798,7 +798,9 @@ export default function HomePage() {
                 {categories
                   .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                   .map(cat => {
-                    const catProducts = products.filter(p => p.category?.id === cat.id);
+                    const catProducts = products
+                      .filter(p => p.category?.id === cat.id)
+                      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
                     return (
                       <div key={cat.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {catProducts.map(p => (
@@ -819,7 +821,9 @@ export default function HomePage() {
               categories
                 .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                 .map(cat => {
-                const catProducts = products.filter(p => p.category?.id === cat.id);
+                const catProducts = products
+                  .filter(p => p.category?.id === cat.id)
+                  .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
                 return (
                   <div key={cat.id}>
                     <div className={`${getGradient(cat.color)} flex items-center gap-2 px-4 py-2 rounded-xl mb-2.5 shadow-sm`}

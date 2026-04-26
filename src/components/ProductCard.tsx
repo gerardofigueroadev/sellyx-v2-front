@@ -47,9 +47,9 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
         textAlign: 'left',
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '10px 12px 10px 14px',
-        borderRadius: 11,
+        gap: compact ? 7 : 10,
+        padding: compact ? '5px 9px 5px 11px' : '10px 12px 10px 14px',
+        borderRadius: compact ? 9 : 11,
         border: `1.5px solid ${flash ? 'rgba(96,165,250,0.55)' : accent ? `${accent}40` : 'rgba(71,85,105,0.4)'}`,
         background: flash ? 'rgba(37,99,235,0.12)' : bgTint,
         cursor: product.isAvailable ? 'pointer' : 'not-allowed',
@@ -62,8 +62,8 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
       {/* Barra lateral de categoría */}
       {accent && (
         <div style={{
-          position: 'absolute', left: 0, top: 0, bottom: 0, width: 5,
-          borderRadius: '11px 0 0 11px',
+          position: 'absolute', left: 0, top: 0, bottom: 0, width: compact ? 4 : 5,
+          borderRadius: compact ? '9px 0 0 9px' : '11px 0 0 11px',
           background: accent,
           opacity: product.isAvailable ? 1 : 0.3,
         }} />
@@ -71,7 +71,12 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
 
       {/* Emoji */}
       {showEmoji && (
-        <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0, width: 28, textAlign: 'center' }}>
+        <span style={{
+          fontSize: compact ? 17 : 22,
+          lineHeight: 1, flexShrink: 0,
+          width: compact ? 20 : 28,
+          textAlign: 'center',
+        }}>
           {product.emoji || '🍽️'}
         </span>
       )}
@@ -80,7 +85,9 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Nombre — con salto de línea */}
         <p style={{
-          fontSize: 13, fontWeight: 600, lineHeight: 1.35,
+          fontSize: compact ? 12 : 13,
+          fontWeight: 600,
+          lineHeight: compact ? 1.2 : 1.35,
           color: product.isAvailable ? 'white' : '#64748b',
           wordBreak: 'break-word',
           margin: 0,
@@ -101,20 +108,20 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
 
       {compact ? (
         /* Modo compact: precio a la derecha + badge de cantidad si > 0 */
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
           {quantity > 0 && (
             <span style={{
-              minWidth: 22, height: 22, padding: '0 6px', borderRadius: 11,
+              minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               background: accent ?? '#2563eb',
-              color: 'white', fontSize: 11, fontWeight: 800,
+              color: 'white', fontSize: 10, fontWeight: 800,
               boxShadow: `0 0 6px ${accent ?? '#2563eb'}66`,
             }}>
               ×{quantity}
             </span>
           )}
           <span style={{
-            fontSize: 13, fontWeight: 700,
+            fontSize: 12, fontWeight: 700,
             color: product.isAvailable ? '#60a5fa' : '#475569',
             whiteSpace: 'nowrap',
           }}>
