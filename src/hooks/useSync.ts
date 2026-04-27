@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { onSyncStatusChange, SyncStatus } from '../lib/syncService';
 import { getPendingCount } from '../lib/db';
+import { isTauri } from '../lib/isTauri';
 
 export function useSync() {
   const [isOnline, setIsOnline]       = useState(navigator.onLine);
@@ -9,8 +10,7 @@ export function useSync() {
 
   useEffect(() => {
     // Carga inicial del conteo de pendientes
-    const isTauri = '__TAURI__' in window;
-    if (isTauri) {
+    if (isTauri()) {
       getPendingCount().then(setPendingCount).catch(() => {});
     }
 

@@ -1,4 +1,5 @@
 import { getPendingOrders, markOrderSynced, incrementRetry, getPendingCount, getServerIdForLocalId } from './db';
+import { isTauri } from './isTauri';
 
 interface PendingComplete {
   serverId?: number;
@@ -149,13 +150,13 @@ export function startSyncService(
   getToken: () => Promise<string | null>,
   apiBase: string,
 ): void {
-  const isTauri = '__TAURI__' in window;
+  const tauri = isTauri();
   const trySync = async () => {
     // Orden importante: 1) crear órdenes pendientes (para obtener server_id)
     //                   2) luego sincronizar completes (que pueden depender de esos server_id)
     //                   3) settings en paralelo
     await syncPendingOrders(getToken, apiBase).catch(() => {});
-    await syncPendingCompletes(getToken, apiBase, isTauri).catch(() => {});
+    await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
     await syncPendingSettings(getToken, apiBase).catch(() => {});
   };
 

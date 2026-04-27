@@ -9,6 +9,7 @@ import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/Orde
 import { saveOrderToOutbox, markOrderSynced, getPendingOrders } from '../lib/db';
 import { startSyncService, stopSyncService } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
+import { isTauri } from '../lib/isTauri';
 
 import API_URL from '../config';
 import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
@@ -66,7 +67,7 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
   warningMins: number; dangerMins: number; vertical?: boolean;
   products?: ApiProduct[];
 }) {
-  const isTauri = '__TAURI__' in window;
+  const tauri = isTauri();
   const cacheKey = `pos_kitchen_pending${branchId ? `_${branchId}` : ''}`;
 
   // IDs marcados como completados localmente (esperando sync) — se filtran de la lista
@@ -116,7 +117,7 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
 
     // 2) Pedidos locales del outbox (Tauri only)
     let offlinePending: KitchenOrder[] = [];
-    if (isTauri) {
+    if (tauri) {
       try {
         const outbox = await getPendingOrders();
         // Filtrar los que tienen branchId distinto al filtro actual
@@ -150,7 +151,7 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     }
 
     setOrders([...offlinePending, ...serverPending]);
-  }, [token, branchId, cacheKey, isTauri, products]);
+  }, [token, branchId, cacheKey, tauri, products]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
@@ -462,7 +463,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
 export default function HomePage() {
   const { token, user, hasPermission, activeBranchId, currency, getValidToken } = useAuth();
   const toast = useToast();
-  const isTauri = '__TAURI__' in window;
+  const tauri = isTauri();
   const { isOnline, pendingCount, syncing } = useSync();
   const [forceOffline] = useState(() => localStorage.getItem('pos_force_offline') === 'true');
   const isEffectivelyOffline = forceOffline || !isOnline;
@@ -654,7 +655,7 @@ export default function HomePage() {
 
   // Servicio de sincronización offline (solo en Tauri)
   useEffect(() => {
-    if (!isTauri || !token) return;
+    if (!tauri || !token) return;
     startSyncService(getValidToken, API);
     return () => stopSyncService();
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -816,7 +817,7 @@ export default function HomePage() {
     };
 
     // Guardar en outbox PRIMERO — garantía de que no se pierde aunque se corte la conexión
-    if (isTauri) {
+    if (tauri) {
       await saveOrderToOutbox(localId, payload).catch(() => {});
     }
 
@@ -825,10 +826,10 @@ export default function HomePage() {
       const res = await apiFetch(token, '/orders', { method: 'POST', body: JSON.stringify(payload) });
       if (res.ok) {
         serverOrder = await res.json();
-        if (isTauri) await markOrderSynced(localId, serverOrder.id).catch(() => {});
+        if (tauri) await markOrderSynced(localId, serverOrder.id).catch(() => {});
       } else {
         const d = await res.json().catch(() => ({}));
-        if (!isTauri) {
+        if (!tauri) {
           toast.error(d.message ?? 'Error al registrar venta');
           return;
         }
