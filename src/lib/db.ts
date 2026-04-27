@@ -67,3 +67,13 @@ export async function getPendingCount(): Promise<number> {
   );
   return rows[0]?.count ?? 0;
 }
+
+/** Devuelve el server_id de una orden ya sincronizada por su local_id (o null). */
+export async function getServerIdForLocalId(localId: string): Promise<number | null> {
+  const db = await getDb();
+  const rows = await db.select<{ server_id: number | null }[]>(
+    'SELECT server_id FROM orders_outbox WHERE local_id = ? AND synced = 1',
+    [localId],
+  );
+  return rows[0]?.server_id ?? null;
+}

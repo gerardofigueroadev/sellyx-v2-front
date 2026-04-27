@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 import API_URL from '../config';
 const API = `${API_URL}/api`;
@@ -43,13 +44,13 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
   );
   const [copying, setCopying] = useState(false);
   const [result, setResult] = useState<{ copied: number; skipped: number } | null>(null);
-  const [error, setError] = useState('');
+  const toast = useToast();
 
   const handleCopy = async () => {
     if (!sourceId || !targetId || sourceId === targetId) {
-      setError('Selecciona sucursales distintas'); return;
+      toast.warning('Selecciona sucursales distintas'); return;
     }
-    setCopying(true); setError('');
+    setCopying(true);
     try {
       const res = await fetch(`${API}/products/copy-to-branch`, {
         method: 'POST',
@@ -61,7 +62,7 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
       setResult(data);
       onDone();
     } catch (e: any) {
-      setError(e.message);
+      toast.error(e.message);
     } finally {
       setCopying(false);
     }
@@ -149,10 +150,6 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
               </select>
             </div>
 
-            {error && (
-              <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 px-4 py-2.5 rounded-xl">⚠️ {error}</p>
-            )}
-
             <div className="flex gap-3 pt-1">
               <button onClick={onClose} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium transition">
                 Cancelar
@@ -177,19 +174,17 @@ export default function ProductsPage() {
   const { token, branches, activeBranchId, currency } = useAuth();
   const isAdmin = branches.length > 1;
 
+  const toast = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [toast, setToast] = useState('');
   const [showCopyModal, setShowCopyModal] = useState(false);
 
   // Selected branch for filtering (admin can switch, others fixed to their branch)
@@ -200,8 +195,6 @@ export default function ProductsPage() {
   useEffect(() => {
     setFilterBranchId(activeBranchId ?? (isAdmin && branches.length > 0 ? branches[0].id : null));
   }, [activeBranchId, isAdmin, branches]);
-
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
   const fetchAll = useCallback(async () => {
     if (!token) return;
@@ -216,34 +209,32 @@ export default function ProductsPage() {
       setProducts(await pRes.json());
       setCategories(await cRes.json());
     } catch (e: any) {
-      setError(e.message);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
-  }, [token, filterBranchId]);
+  }, [token, filterBranchId, toast]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const openCreate = () => {
     setEditing(null);
     setForm({ ...emptyForm, categoryId: categories[0]?.id?.toString() ?? '' });
-    setFormError('');
     setShowModal(true);
   };
 
   const openEdit = (p: Product) => {
     setEditing(p);
     setForm({ name: p.name, description: p.description ?? '', price: p.price.toString(), emoji: p.emoji ?? '🍽️', isAvailable: p.isAvailable, categoryId: p.category?.id?.toString() ?? '' });
-    setFormError('');
     setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { setFormError('El nombre es obligatorio'); return; }
-    if (!form.price || isNaN(Number(form.price)) || Number(form.price) <= 0) { setFormError('El precio debe ser mayor a 0'); return; }
-    if (!form.categoryId) { setFormError('Selecciona una categoría'); return; }
+    if (!form.name.trim()) { toast.warning('El nombre es obligatorio'); return; }
+    if (!form.price || isNaN(Number(form.price)) || Number(form.price) <= 0) { toast.warning('El precio debe ser mayor a 0'); return; }
+    if (!form.categoryId) { toast.warning('Selecciona una categoría'); return; }
 
-    setSaving(true); setFormError('');
+    setSaving(true);
     const body: any = {
       name: form.name.trim(), description: form.description.trim(),
       price: parseFloat(form.price), emoji: form.emoji,
@@ -262,9 +253,9 @@ export default function ProductsPage() {
       if (!res.ok) { const d = await res.json(); throw new Error(d.message ?? 'Error al guardar'); }
       await fetchAll();
       setShowModal(false);
-      showToast(editing ? 'Producto actualizado' : 'Producto creado');
+      toast.success(editing ? 'Producto actualizado' : 'Producto creado');
     } catch (e: any) {
-      setFormError(e.message);
+      toast.error(e.message);
     } finally {
       setSaving(false);
     }
@@ -278,8 +269,8 @@ export default function ProductsPage() {
         body: JSON.stringify({ isAvailable: !p.isAvailable }),
       });
       setProducts(prev => prev.map(x => x.id === p.id ? { ...x, isAvailable: !x.isAvailable } : x));
-      showToast(!p.isAvailable ? 'Producto habilitado' : 'Producto deshabilitado');
-    } catch { showToast('Error al actualizar'); }
+      toast.success(!p.isAvailable ? 'Producto habilitado' : 'Producto deshabilitado');
+    } catch { toast.error('Error al actualizar'); }
   };
 
   const handleDelete = async () => {
@@ -288,8 +279,8 @@ export default function ProductsPage() {
       await fetch(`${API}/products/${deleteId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       setProducts(prev => prev.filter(p => p.id !== deleteId));
       setDeleteId(null);
-      showToast('Producto eliminado');
-    } catch { showToast('Error al eliminar'); }
+      toast.success('Producto eliminado');
+    } catch { toast.error('Error al eliminar'); }
   };
 
   const filtered = products.filter(p =>
@@ -303,12 +294,6 @@ export default function ProductsPage() {
         <div className="animate-spin w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
         <p className="text-slate-400">Cargando productos...</p>
       </div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="flex-1 flex items-center justify-center bg-slate-800">
-      <p className="text-red-400">⚠️ {error}</p>
     </div>
   );
 
@@ -554,9 +539,6 @@ export default function ProductsPage() {
                 </div>
               )}
 
-              {formError && (
-                <div className="bg-red-500/15 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">⚠️ {formError}</div>
-              )}
             </div>
             <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
               <button onClick={() => setShowModal(false)}
@@ -585,12 +567,6 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium z-50 animate-pulse">
-          ✓ {toast}
-        </div>
-      )}
     </div>
   );
 }

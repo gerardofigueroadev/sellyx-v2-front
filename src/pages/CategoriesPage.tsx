@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 import API_URL from '../config';
 const API = `${API_URL}/api`;
@@ -57,25 +58,18 @@ export default function CategoriesPage() {
   const { token, branches, activeBranchId } = useAuth();
   const isAdmin = branches.length > 1;
 
+  const toast = useToast();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [filterBranchId, setFilterBranchId] = useState<number | null>(activeBranchId);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [toast, setToast] = useState('');
 
   useEffect(() => { setFilterBranchId(activeBranchId); }, [activeBranchId]);
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(''), 2500);
-  };
 
   const fetchCategories = useCallback(async () => {
     if (!token) return;
@@ -88,18 +82,17 @@ export default function CategoriesPage() {
       if (!res.ok) throw new Error('Error al cargar categorías');
       setCategories(await res.json());
     } catch (e: any) {
-      setError(e.message);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
-  }, [token, filterBranchId]);
+  }, [token, filterBranchId, toast]);
 
   useEffect(() => { fetchCategories(); }, [fetchCategories]);
 
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
-    setFormError('');
     setShowEmojiPicker(false);
     setShowModal(true);
   };
@@ -113,7 +106,6 @@ export default function CategoriesPage() {
       color: cat.color ?? 'blue',
       isActive: cat.isActive,
     });
-    setFormError('');
     setShowEmojiPicker(false);
     setShowModal(true);
   };
@@ -121,9 +113,8 @@ export default function CategoriesPage() {
   const activeCount = categories.filter(c => c.isActive).length;
 
   const handleSave = async () => {
-    if (!form.name.trim()) { setFormError('El nombre es obligatorio'); return; }
+    if (!form.name.trim()) { toast.warning('El nombre es obligatorio'); return; }
     setSaving(true);
-    setFormError('');
     const body: any = {
       name: form.name.trim(),
       description: form.description.trim(),
@@ -148,9 +139,9 @@ export default function CategoriesPage() {
       }
       await fetchCategories();
       setShowModal(false);
-      showToast(editing ? 'Categoría actualizada' : 'Categoría creada');
+      toast.success(editing ? 'Categoría actualizada' : 'Categoría creada');
     } catch (e: any) {
-      setFormError(e.message);
+      toast.error(e.message);
     } finally {
       setSaving(false);
     }
@@ -158,7 +149,7 @@ export default function CategoriesPage() {
 
   const toggleActive = async (cat: Category) => {
     if (!cat.isActive && activeCount >= 3) {
-      showToast('⚠️ Límite alcanzado: solo 3 categorías activas');
+      toast.warning('Límite alcanzado: solo 3 categorías activas');
       return;
     }
     try {
@@ -169,12 +160,12 @@ export default function CategoriesPage() {
       });
       if (!res.ok) {
         const d = await res.json();
-        showToast(`⚠️ ${d.message ?? 'Error al actualizar'}`);
+        toast.error(d.message ?? 'Error al actualizar');
         return;
       }
       setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, isActive: !c.isActive } : c));
-      showToast(!cat.isActive ? 'Categoría activada' : 'Categoría desactivada');
-    } catch { showToast('Error al actualizar'); }
+      toast.success(!cat.isActive ? 'Categoría activada' : 'Categoría desactivada');
+    } catch { toast.error('Error al actualizar'); }
   };
 
   const handleDelete = async () => {
@@ -190,10 +181,10 @@ export default function CategoriesPage() {
       }
       setCategories(prev => prev.filter(c => c.id !== deleteId));
       setDeleteId(null);
-      showToast('Categoría eliminada');
+      toast.success('Categoría eliminada');
     } catch (e: any) {
       setDeleteId(null);
-      showToast(e.message);
+      toast.error(e.message);
     }
   };
 
@@ -212,7 +203,7 @@ export default function CategoriesPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ items }),
       });
-    } catch { showToast('⚠️ Error al reordenar'); fetchCategories(); }
+    } catch { toast.error('Error al reordenar'); fetchCategories(); }
   };
 
   if (loading) return (
@@ -221,12 +212,6 @@ export default function CategoriesPage() {
         <div className="animate-spin w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
         <p className="text-slate-400">Cargando categorías...</p>
       </div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="flex-1 flex items-center justify-center bg-slate-800">
-      <p className="text-red-400">⚠️ {error}</p>
     </div>
   );
 
@@ -505,11 +490,6 @@ export default function CategoriesPage() {
                 </div>
               )}
 
-              {formError && (
-                <div className="bg-red-500/15 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
-                  ⚠️ {formError}
-                </div>
-              )}
             </div>
 
             <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
@@ -568,12 +548,6 @@ export default function CategoriesPage() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium z-50">
-          ✓ {toast}
-        </div>
-      )}
     </div>
   );
 }

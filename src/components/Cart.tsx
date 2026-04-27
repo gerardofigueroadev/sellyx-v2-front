@@ -177,7 +177,6 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
           items.map(item => (
             <div key={item.id} className="bg-slate-800 rounded-xl p-3 space-y-2">
               <div className="flex items-center gap-3">
-                <span className="text-2xl shrink-0">{item.emoji || '🍽️'}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-white text-sm font-medium truncate">{item.name}</p>
                   <p className="text-blue-400 text-xs">{currency} {Number(item.price).toFixed(2)} × {item.quantity}</p>

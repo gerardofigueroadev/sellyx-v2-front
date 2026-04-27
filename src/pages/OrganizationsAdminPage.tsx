@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 import API_URL from '../config';
 const API = `${API_URL}/api`;
@@ -531,9 +532,9 @@ function OrgCard({ org, onClick }: { org: OrgWithSub; onClick: () => void }) {
 function CreateOrgModal({ token, onClose, onCreated }: {
   token: string; onClose: () => void; onCreated: () => void;
 }) {
+  const toast = useToast();
   const [form, setForm] = useState({ name: '', code: '', taxId: '', email: '', phone: '', address: '' });
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
   const autoCode = form.name.toLowerCase()
     .replace(/[áàä]/g, 'a').replace(/[éèë]/g, 'e').replace(/[íìï]/g, 'i')
@@ -541,8 +542,8 @@ function CreateOrgModal({ token, onClose, onCreated }: {
     .replace(/[^a-z0-9]/g, '').slice(0, 20);
 
   const handleSave = async () => {
-    if (!form.name.trim()) { setError('El nombre es obligatorio'); return; }
-    setSaving(true); setError('');
+    if (!form.name.trim()) { toast.warning('El nombre es obligatorio'); return; }
+    setSaving(true);
     try {
       const body: any = { name: form.name.trim() };
       const codeVal = form.code.trim() || autoCode;
@@ -557,8 +558,9 @@ function CreateOrgModal({ token, onClose, onCreated }: {
       if (!res.ok) { const d = await res.json(); throw new Error(d.message ?? 'Error al crear'); }
       onCreated();
       onClose();
+      toast.success('Organización creada');
     } catch (e: any) {
-      setError(e.message);
+      toast.error(e.message);
     } finally {
       setSaving(false);
     }
@@ -617,9 +619,6 @@ function CreateOrgModal({ token, onClose, onCreated }: {
             <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
               placeholder="Calle, ciudad..." className={inputCls} />
           </div>
-          {error && (
-            <div className="bg-red-500/15 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">⚠️ {error}</div>
-          )}
         </div>
         <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
           <button onClick={onClose} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium transition">Cancelar</button>

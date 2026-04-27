@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listPrinters, getSavedPrinter, savePrinter } from '../hooks/usePrinterStore';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 import API_URL from '../config';
 const API = `${API_URL}/api`;
@@ -23,16 +24,6 @@ interface UserRecord {
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
-function Toast({ message, onDone }: { message: string; onDone: () => void }) {
-  useEffect(() => { const t = setTimeout(onDone, 2500); return () => clearTimeout(t); }, [onDone]);
-  const isError = message.startsWith('⚠️') || message.startsWith('Error');
-  return (
-    <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-white shadow-lg text-sm font-medium ${isError ? 'bg-red-600' : 'bg-green-600'}`}>
-      {isError ? '⚠️' : '✓'} {message.replace('⚠️ ', '')}
-    </div>
-  );
-}
-
 function SkeletonRow({ cols }: { cols: number }) {
   return (
     <tr className="border-b border-slate-700/50">
@@ -76,11 +67,11 @@ function Input({ value, onChange, placeholder }: { value: string; onChange: (v: 
 // ─── Tab Empresa ──────────────────────────────────────────────────────────────
 function TabEmpresa({ token }: { token: string }) {
   const { user } = useAuth();
+  const toast = useToast();
   const [org, setOrg] = useState<Organization | null>(null);
   const [form, setForm] = useState({ name: '', taxId: '', email: '', phone: '', address: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState('');
 
   useEffect(() => {
     if (!user?.organization?.id) return;
@@ -97,8 +88,8 @@ function TabEmpresa({ token }: { token: string }) {
     try {
       const res = await apiFetch(token, `/organizations/${org.id}`, { method: 'PATCH', body: JSON.stringify(form) });
       if (!res.ok) throw new Error('Error al guardar');
-      setToast('Datos de empresa guardados');
-    } catch { setToast('⚠️ Error al guardar'); }
+      toast.success('Datos de empresa guardados');
+    } catch { toast.error('Error al guardar'); }
     finally { setSaving(false); }
   };
 
@@ -106,7 +97,6 @@ function TabEmpresa({ token }: { token: string }) {
 
   return (
     <div className="max-w-xl">
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-6 space-y-4">
         <div className="flex items-center gap-3 mb-2">
           <div className="w-12 h-12 bg-blue-600/20 rounded-xl flex items-center justify-center text-2xl">🏢</div>
@@ -155,15 +145,14 @@ const emptyBranch: BranchForm = { name: '', address: '', phone: '', isActive: tr
 
 function TabSucursales({ token }: { token: string }) {
   const { user } = useAuth();
+  const toast = useToast();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Branch | null>(null);
   const [form, setForm] = useState<BranchForm>(emptyBranch);
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState('');
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [toast, setToast] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,33 +163,31 @@ function TabSucursales({ token }: { token: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const openCreate = () => { setEditing(null); setForm(emptyBranch); setFormError(''); setShowModal(true); };
-  const openEdit = (b: Branch) => { setEditing(b); setForm({ name: b.name, address: b.address ?? '', phone: b.phone ?? '', isActive: b.isActive }); setFormError(''); setShowModal(true); };
+  const openCreate = () => { setEditing(null); setForm(emptyBranch); setShowModal(true); };
+  const openEdit = (b: Branch) => { setEditing(b); setForm({ name: b.name, address: b.address ?? '', phone: b.phone ?? '', isActive: b.isActive }); setShowModal(true); };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { setFormError('El nombre es obligatorio'); return; }
-    setSaving(true); setFormError('');
+    if (!form.name.trim()) { toast.warning('El nombre es obligatorio'); return; }
+    setSaving(true);
     const body = editing
       ? { ...form, name: form.name.trim() }
       : { ...form, name: form.name.trim(), organizationId: user?.organization?.id };
     const res = await apiFetch(token, editing ? `/branches/${editing.id}` : '/branches', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(body) });
-    if (!res.ok) { const d = await res.json(); setFormError(d.message ?? 'Error al guardar'); setSaving(false); return; }
-    await load(); setShowModal(false); setToast(editing ? 'Sucursal actualizada' : 'Sucursal creada');
+    if (!res.ok) { const d = await res.json(); toast.error(d.message ?? 'Error al guardar'); setSaving(false); return; }
+    await load(); setShowModal(false); toast.success(editing ? 'Sucursal actualizada' : 'Sucursal creada');
     setSaving(false);
   };
 
   const handleDelete = async () => {
     if (!deleteId) return;
     const res = await apiFetch(token, `/branches/${deleteId}`, { method: 'DELETE' });
-    if (res.ok) { setBranches(p => p.filter(b => b.id !== deleteId)); setToast('Sucursal eliminada'); }
-    else setToast('⚠️ No se pudo eliminar');
+    if (res.ok) { setBranches(p => p.filter(b => b.id !== deleteId)); toast.success('Sucursal eliminada'); }
+    else toast.error('No se pudo eliminar');
     setDeleteId(null);
   };
 
   return (
     <div>
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
-
       <div className="flex items-center justify-between mb-4">
         <p className="text-slate-400 text-sm">{branches.length} sucursal(es)</p>
         <button onClick={openCreate} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition">
@@ -272,7 +259,6 @@ function TabSucursales({ token }: { token: string }) {
                   <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${form.isActive ? 'translate-x-6' : 'translate-x-0.5'}`} />
                 </button>
               </div>
-              {formError && <div className="bg-red-500/15 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">⚠️ {formError}</div>}
             </div>
             <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
               <button onClick={() => setShowModal(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium transition">Cancelar</button>
@@ -307,18 +293,18 @@ function TabSucursales({ token }: { token: string }) {
 function ResetPasswordModal({ user, token, onClose, onDone }: {
   user: UserRecord; token: string; onClose: () => void; onDone: () => void;
 }) {
+  const toast = useToast();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm]   = useState('');
   const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState('');
 
   const handleSave = async () => {
-    if (!password.trim()) { setError('Ingresa la nueva contraseña'); return; }
-    if (password !== confirm) { setError('Las contraseñas no coinciden'); return; }
-    if (password.length < 6) { setError('Mínimo 6 caracteres'); return; }
-    setSaving(true); setError('');
+    if (!password.trim()) { toast.warning('Ingresa la nueva contraseña'); return; }
+    if (password !== confirm) { toast.warning('Las contraseñas no coinciden'); return; }
+    if (password.length < 6) { toast.warning('Mínimo 6 caracteres'); return; }
+    setSaving(true);
     const res = await apiFetch(token, `/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ password }) });
-    if (!res.ok) { setError('Error al restablecer contraseña'); setSaving(false); return; }
+    if (!res.ok) { toast.error('Error al restablecer contraseña'); setSaving(false); return; }
     onDone();
   };
 
@@ -345,7 +331,6 @@ function ResetPasswordModal({ user, token, onClose, onDone }: {
               placeholder="Repite la contraseña"
               className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
-          {error && <p className="text-red-400 text-sm">⚠️ {error}</p>}
         </div>
         <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
           <button onClick={onClose} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium transition">Cancelar</button>
@@ -364,22 +349,22 @@ function ResetPasswordModal({ user, token, onClose, onDone }: {
 function CreateUserModal({ token, roles, branches, onClose, onCreated }: {
   token: string; roles: Role[]; branches: Branch[]; onClose: () => void; onCreated: () => void;
 }) {
+  const toast = useToast();
   const [form, setForm] = useState({ name: '', username: '', password: '', roleId: roles[0]?.id ?? 0, branchId: 0 });
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.username.trim() || !form.password.trim()) {
-      setError('Nombre, usuario y contraseña son obligatorios'); return;
+      toast.warning('Nombre, usuario y contraseña son obligatorios'); return;
     }
-    if (form.password.length < 6) { setError('La contraseña debe tener mínimo 6 caracteres'); return; }
-    setSaving(true); setError('');
+    if (form.password.length < 6) { toast.warning('La contraseña debe tener mínimo 6 caracteres'); return; }
+    setSaving(true);
     const body: any = { name: form.name.trim(), username: form.username.trim(), password: form.password, roleId: form.roleId };
     if (form.branchId) body.branchId = form.branchId;
     const res = await apiFetch(token, '/users', { method: 'POST', body: JSON.stringify(body) });
     if (!res.ok) {
       const d = await res.json();
-      setError(Array.isArray(d.message) ? d.message[0] : d.message ?? 'Error al crear');
+      toast.error(Array.isArray(d.message) ? d.message[0] : d.message ?? 'Error al crear');
       setSaving(false); return;
     }
     onCreated();
@@ -430,7 +415,6 @@ function CreateUserModal({ token, roles, branches, onClose, onCreated }: {
               </select>
             </div>
           </div>
-          {error && <p className="text-red-400 text-sm">⚠️ {error}</p>}
         </div>
         <div className="flex gap-3 px-6 py-4 border-t border-slate-700">
           <button onClick={onClose} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium transition">Cancelar</button>
@@ -448,10 +432,10 @@ function CreateUserModal({ token, roles, branches, onClose, onCreated }: {
 // ─── Tab Usuarios ─────────────────────────────────────────────────────────────
 function TabUsuarios({ token, roles, rolesLoading }: { token: string; roles: Role[]; rolesLoading: boolean }) {
   const { user: currentUser } = useAuth();
+  const toast = useToast();
   const [users, setUsers]       = useState<UserRecord[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading]   = useState(true);
-  const [toast, setToast]       = useState('');
   const [updatingId, setUpdatingId]   = useState<number | null>(null);
   const [showCreate, setShowCreate]   = useState(false);
   const [resettingUser, setResettingUser] = useState<UserRecord | null>(null);
@@ -477,16 +461,16 @@ function TabUsuarios({ token, roles, rolesLoading }: { token: string; roles: Rol
       if (!res.ok) throw new Error();
       const updated = await res.json();
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, ...updated } : u));
-      setToast('Usuario actualizado');
-    } catch { setToast('⚠️ Error al actualizar'); }
+      toast.success('Usuario actualizado');
+    } catch { toast.error('Error al actualizar'); }
     finally { setUpdatingId(null); }
   };
 
   const handleDelete = async () => {
     if (!deletingId) return;
     const res = await apiFetch(token, `/users/${deletingId}`, { method: 'DELETE' });
-    if (res.ok) { setUsers(p => p.filter(u => u.id !== deletingId)); setToast('Usuario eliminado'); }
-    else setToast('⚠️ No se pudo eliminar');
+    if (res.ok) { setUsers(p => p.filter(u => u.id !== deletingId)); toast.success('Usuario eliminado'); }
+    else toast.error('No se pudo eliminar');
     setDeletingId(null);
   };
 
@@ -494,18 +478,16 @@ function TabUsuarios({ token, roles, rolesLoading }: { token: string; roles: Rol
 
   return (
     <div>
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
-
       {showCreate && !rolesLoading && (
         <CreateUserModal token={token} roles={roles} branches={branches}
           onClose={() => setShowCreate(false)}
-          onCreated={() => { load(); setToast('Usuario creado'); }} />
+          onCreated={() => { load(); toast.success('Usuario creado'); }} />
       )}
 
       {resettingUser && (
         <ResetPasswordModal user={resettingUser} token={token}
           onClose={() => setResettingUser(null)}
-          onDone={() => { setResettingUser(null); setToast('Contraseña restablecida'); }} />
+          onDone={() => { setResettingUser(null); toast.success('Contraseña restablecida'); }} />
       )}
 
       {deletingId !== null && (
@@ -637,24 +619,24 @@ function RoleModal({
   role?: Role; allPermissions: Permission[]; token: string;
   onClose: () => void; onSaved: (r: Role) => void; mode: RoleModalMode;
 }) {
+  const toast = useToast();
   const [name, setName] = useState(role?.name ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
   const [selected, setSelected] = useState(new Set(role?.permissions.map(p => p.id) ?? []));
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
   const toggle = (id: number) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const handleSave = async () => {
-    if (!name.trim()) { setError('El nombre es obligatorio'); return; }
-    setSaving(true); setError('');
+    if (!name.trim()) { toast.warning('El nombre es obligatorio'); return; }
+    setSaving(true);
     const body = { name: name.trim(), description: description.trim(), permissionIds: Array.from(selected) };
     const res = mode === 'create'
       ? await apiFetch(token, '/roles', { method: 'POST', body: JSON.stringify(body) })
       : await apiFetch(token, `/roles/${role!.id}`, { method: 'PATCH', body: JSON.stringify(body) });
     if (!res.ok) {
       const d = await res.json();
-      setError(Array.isArray(d.message) ? d.message[0] : d.message ?? 'Error al guardar');
+      toast.error(Array.isArray(d.message) ? d.message[0] : d.message ?? 'Error al guardar');
       setSaving(false); return;
     }
     onSaved(await res.json());
@@ -737,30 +719,29 @@ function TabRoles({
   allPermissions: Permission[]; permsLoading: boolean;
   onRoleUpdated: (r: Role) => void; onRoleCreated: (r: Role) => void; onRoleDeleted: (id: number) => void;
 }) {
+  const toast = useToast();
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [toast, setToast] = useState('');
 
   const handleDelete = async (id: number) => {
     const res = await apiFetch(token, `/roles/${id}`, { method: 'DELETE' });
-    if (res.ok) { onRoleDeleted(id); setToast('Rol eliminado'); }
-    else { const d = await res.json(); setToast(`⚠️ ${d.message ?? 'Error al eliminar'}`); }
+    if (res.ok) { onRoleDeleted(id); toast.success('Rol eliminado'); }
+    else { const d = await res.json(); toast.error(d.message ?? 'Error al eliminar'); }
     setDeletingId(null);
   };
 
   return (
     <div>
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
       {editingRole && !permsLoading && (
         <RoleModal mode="edit" role={editingRole} allPermissions={allPermissions} token={token}
           onClose={() => setEditingRole(null)}
-          onSaved={r => { onRoleUpdated(r); setEditingRole(null); setToast('Rol actualizado'); }} />
+          onSaved={r => { onRoleUpdated(r); setEditingRole(null); toast.success('Rol actualizado'); }} />
       )}
       {showCreate && !permsLoading && (
         <RoleModal mode="create" allPermissions={allPermissions} token={token}
           onClose={() => setShowCreate(false)}
-          onSaved={r => { onRoleCreated(r); setShowCreate(false); setToast('Rol creado'); }} />
+          onSaved={r => { onRoleCreated(r); setShowCreate(false); toast.success('Rol creado'); }} />
       )}
       {deletingId !== null && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -907,29 +888,67 @@ const PAYMENT_OPTIONS: { key: string; emoji: string; label: string }[] = [
 
 function TabFlags({ token }: { token: string }) {
   const { refreshOrgSettings } = useAuth();
+  const toast = useToast();
   const [settings, setSettings] = useState<OrgSettings>({});
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
-  const [toast,    setToast]    = useState('');
   const [currencyInput, setCurrencyInput] = useState('Bs.');
 
   useEffect(() => {
+    // Inicial: cargar cache local si existe
+    try {
+      const cached = JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}');
+      if (Object.keys(cached).length > 0) {
+        setSettings(cached);
+        setCurrencyInput(cached.currency ?? 'Bs.');
+      }
+    } catch {}
+
+    // Online: refrescar desde el server
     apiFetch(token, '/organizations/my/settings')
-      .then(r => r.json())
-      .then((s: OrgSettings) => { setSettings(s); setCurrencyInput(s.currency ?? 'Bs.'); })
+      .then(r => r.ok ? r.json() : null)
+      .then((s: OrgSettings | null) => {
+        if (s) {
+          setSettings(s);
+          setCurrencyInput(s.currency ?? 'Bs.');
+          localStorage.setItem('pos_org_settings', JSON.stringify(s));
+        }
+      })
+      .catch(() => {/* offline: ya cargamos cache */})
       .finally(() => setLoading(false));
   }, [token]);
 
   const saveSettings = async (patch: Partial<OrgSettings>, label = 'Configuración guardada') => {
     setSaving(true);
     const prev = settings;
-    setSettings(s => ({ ...s, ...patch }));
+    const merged = { ...settings, ...patch };
+    setSettings(merged);
+    // Cachear inmediato para que HomePage lo use aunque no se sincronice
+    localStorage.setItem('pos_org_settings', JSON.stringify(merged));
+    // Mantener sincronizadas las keys que AuthContext lee directo de localStorage
+    if (patch.currency !== undefined) localStorage.setItem('pos_currency', String(patch.currency));
+    if (Array.isArray(patch.enabledPaymentMethods)) localStorage.setItem('pos_payment_methods', JSON.stringify(patch.enabledPaymentMethods));
+
+    // Si está offline, encolar el patch y avisar
+    if (!navigator.onLine) {
+      let queue: any = {};
+      try { queue = JSON.parse(localStorage.getItem('pos_pending_settings_patch') ?? '{}'); } catch {}
+      localStorage.setItem('pos_pending_settings_patch', JSON.stringify({ ...queue, ...patch }));
+      toast.warning(`${label} (sin conexión, se sincronizará)`);
+      setSaving(false);
+      return;
+    }
+
     const res = await apiFetch(token, '/organizations/my/settings', {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
-    if (res.ok) { setToast(label); await refreshOrgSettings(); }
-    else { setSettings(prev); setToast('⚠️ Error al guardar'); }
+    if (res.ok) { toast.success(label); await refreshOrgSettings(); }
+    else {
+      setSettings(prev);
+      localStorage.setItem('pos_org_settings', JSON.stringify(prev));
+      toast.error('Error al guardar');
+    }
     setSaving(false);
   };
 
@@ -944,7 +963,7 @@ function TabFlags({ token }: { token: string }) {
   const togglePaymentMethod = (key: string) => {
     const current: string[] = settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer'];
     const isEnabled = current.includes(key);
-    if (isEnabled && current.length === 1) { setToast('⚠️ Debes tener al menos un método activo'); return; }
+    if (isEnabled && current.length === 1) { toast.warning('Debes tener al menos un método activo'); return; }
     const updated = isEnabled ? current.filter(k => k !== key) : [...current, key];
     saveSettings({ enabledPaymentMethods: updated });
   };
@@ -962,7 +981,6 @@ function TabFlags({ token }: { token: string }) {
 
   return (
     <div className="space-y-5">
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <p className="text-slate-400 text-sm">Activa o desactiva comportamientos automáticos del sistema.</p>
 
       {/* Moneda + Métodos de pago — side by side en pantallas medianas */}
@@ -1256,12 +1274,11 @@ function OfflineModeCard() {
 
 // ─── Printer Card ─────────────────────────────────────────────────────────────
 function PrinterCard() {
+  const toast = useToast();
   const [printers, setPrinters]   = useState<string[]>([]);
   const [selected, setSelected]   = useState<string>('');
   const [saved,    setSaved]       = useState<string>('');
   const [loading,  setLoading]    = useState(true);
-  const [toast,    setToast]      = useState('');
-  const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     Promise.all([listPrinters(), getSavedPrinter()]).then(([list, current]) => {
@@ -1276,9 +1293,7 @@ function PrinterCard() {
     if (!selected) return;
     await savePrinter(selected);
     setSaved(selected);
-    if (toastRef.current) clearTimeout(toastRef.current);
-    setToast('Impresora guardada');
-    toastRef.current = setTimeout(() => setToast(''), 2500);
+    toast.success('Impresora guardada');
   };
 
   if (loading) return (
@@ -1289,7 +1304,6 @@ function PrinterCard() {
 
   return (
     <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-3">
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <div className="flex items-center gap-3">
         <span className="text-2xl">🖨️</span>
         <div>
@@ -1447,11 +1461,11 @@ function WaTypeBadge({ type }: { type: WaResponseType }) {
 }
 
 function TabWhatsapp({ token }: { token: string }) {
+  const toast = useToast();
   const [config, setConfig] = useState<WaConfig>({ phoneNumberId: '', accessToken: '', verifyToken: '', isActive: true });
   const [keywords, setKeywords] = useState<WaKeyword[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState('');
   const [newKw, setNewKw] = useState<{ keyword: string; responseType: WaResponseType; response: string }>({ keyword: '', responseType: 'text', response: '' });
   const [addingKw, setAddingKw] = useState(false);
   const [showToken, setShowToken] = useState(false);
@@ -1474,8 +1488,8 @@ function TabWhatsapp({ token }: { token: string }) {
     try {
       const res = await apiFetch(token, '/whatsapp/config', { method: 'POST', body: JSON.stringify(config) });
       if (!res.ok) throw new Error();
-      setToast('Configuración guardada');
-    } catch { setToast('⚠️ Error al guardar'); }
+      toast.success('Configuración guardada');
+    } catch { toast.error('Error al guardar'); }
     finally { setSaving(false); }
   };
 
@@ -1491,15 +1505,15 @@ function TabWhatsapp({ token }: { token: string }) {
       const created = await res.json();
       setKeywords(p => [...p, created]);
       setNewKw({ keyword: '', responseType: 'text', response: '' });
-      setToast('Respuesta agregada');
-    } catch { setToast('⚠️ Error al agregar'); }
+      toast.success('Respuesta agregada');
+    } catch { toast.error('Error al agregar'); }
     finally { setAddingKw(false); }
   };
 
   const deleteKeyword = async (id: number) => {
     const res = await apiFetch(token, `/whatsapp/keywords/${id}`, { method: 'DELETE' });
     if (res.ok) setKeywords(p => p.filter(k => k.id !== id));
-    else setToast('⚠️ Error al eliminar');
+    else toast.error('Error al eliminar');
   };
 
   const toggleKeyword = async (kw: WaKeyword) => {
@@ -1513,7 +1527,6 @@ function TabWhatsapp({ token }: { token: string }) {
 
   return (
     <div className="max-w-2xl space-y-5">
-      {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
       {/* Credenciales */}
       <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 space-y-4">

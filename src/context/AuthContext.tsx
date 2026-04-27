@@ -66,7 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem('user');
     return stored ? JSON.parse(stored) : null;
   });
-  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branches, setBranches] = useState<Branch[]>(() => {
+    try { return JSON.parse(localStorage.getItem('pos_branches') ?? '[]'); }
+    catch { return []; }
+  });
   const [activeBranchId, setActiveBranchId] = useState<number | null>(() => {
     const stored = localStorage.getItem('user');
     if (!stored) return null;
@@ -115,14 +118,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isAdmin = user.permissions?.includes('orders:view_all');
     if (!isAdmin) return;
     fetch(`${API_URL}/branches`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : [])
-      .then((list: Branch[]) => {
+      .then(r => r.ok ? r.json() : null)
+      .then((list: Branch[] | null) => {
+        if (!list) return;
         setBranches(list);
+        localStorage.setItem('pos_branches', JSON.stringify(list));
         if (list.length > 0 && activeBranchId === null) {
           setActiveBranchId(list[0].id);
         }
       })
-      .catch(() => {});
+      .catch(() => {/* offline: usar cache */});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.id]);
 
@@ -200,11 +205,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Tokens y datos de sesión
     localStorage.removeItem('token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
+    // Caches POS
     localStorage.removeItem('pos_currency');
     localStorage.removeItem('pos_payment_methods');
+    localStorage.removeItem('pos_org_settings');
+    localStorage.removeItem('pos_branches');
+    localStorage.removeItem('pos_active_shift');
+    localStorage.removeItem('pos_pending_shift_open');
+    localStorage.removeItem('pos_pending_shift_close');
+    localStorage.removeItem('pos_pending_settings_patch');
+    localStorage.removeItem('pos_pending_completes');
+    localStorage.removeItem('products_cache');
+    localStorage.removeItem('categories_cache');
+    // Limpiar caches de cocina (todas las branches)
+    Object.keys(localStorage).filter(k => k.startsWith('pos_kitchen_pending')).forEach(k => localStorage.removeItem(k));
     setToken(null);
     setUser(null);
     setBranches([]);

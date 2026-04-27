@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { ApiProduct, ApiCategory, CartItem } from '../types';
 import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
-import { saveOrderToOutbox, markOrderSynced } from '../lib/db';
+import { saveOrderToOutbox, markOrderSynced, getPendingOrders } from '../lib/db';
 import { startSyncService, stopSyncService } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
 
@@ -32,11 +33,19 @@ function getGradient(color: string) { return GRADIENTS[color] ?? GRADIENTS.blue;
 
 // ─── Kitchen types ────────────────────────────────────────────────────────────
 interface KitchenOrder {
-  id: number;
+  id: number;            // server id (0 si todavía es local)
+  localId?: string;      // presente si proviene del outbox offline
+  isLocal?: boolean;     // badge visual
   orderNumber: string;
-  ticketNumber: number;
+  ticketNumber: number | string;
   createdAt: string;
-  items: { id: number; quantity: number; product: { name: string; emoji: string } }[];
+  items: { id?: number; quantity: number; product: { name: string; emoji: string }; notes?: string }[];
+}
+
+interface PendingComplete {
+  serverId?: number;
+  localId?: string;
+  completedAt: string;
 }
 
 function elapsed(dateStr: string) {
@@ -52,23 +61,103 @@ function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false }: {
+function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false, products = [] }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
   warningMins: number; dangerMins: number; vertical?: boolean;
+  products?: ApiProduct[];
 }) {
-  const [orders, setOrders] = useState<KitchenOrder[]>([]);
-  const [completing, setCompleting] = useState<number | null>(null);
+  const isTauri = '__TAURI__' in window;
+  const cacheKey = `pos_kitchen_pending${branchId ? `_${branchId}` : ''}`;
+
+  // IDs marcados como completados localmente (esperando sync) — se filtran de la lista
+  const getCompletedLocally = (): { serverIds: Set<number>; localIds: Set<string> } => {
+    try {
+      const queue: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
+      const serverIds = new Set<number>();
+      const localIds = new Set<string>();
+      queue.forEach(q => {
+        if (q.serverId) serverIds.add(q.serverId);
+        if (q.localId) localIds.add(q.localId);
+      });
+      return { serverIds, localIds };
+    } catch { return { serverIds: new Set(), localIds: new Set() }; }
+  };
+
+  const [orders, setOrders] = useState<KitchenOrder[]>(() => {
+    try {
+      const cached: KitchenOrder[] = JSON.parse(localStorage.getItem(cacheKey) ?? '[]');
+      const { serverIds } = getCompletedLocally();
+      return cached.filter(o => !serverIds.has(o.id));
+    } catch { return []; }
+  });
+  const [completing, setCompleting] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
 
   const load = useCallback(async () => {
+    const { serverIds, localIds } = getCompletedLocally();
     const qs = branchId ? `?branchId=${branchId}` : '';
-    const res = await apiFetch(token, `/orders${qs}`);
-    if (res.ok) {
-      const all = await res.json();
-      setOrders(all.filter((o: any) => o.status === 'pending'));
+
+    // 1) Pedidos del servidor (con cache offline)
+    let serverPending: KitchenOrder[] = [];
+    try {
+      const res = await apiFetch(token, `/orders${qs}`);
+      if (res.ok) {
+        const all = await res.json();
+        serverPending = all.filter((o: any) => o.status === 'pending');
+        localStorage.setItem(cacheKey, JSON.stringify(serverPending));
+      } else {
+        try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
+      }
+    } catch {
+      try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
     }
-  }, [token, branchId]);
+    serverPending = serverPending.filter(o => !serverIds.has(o.id));
+
+    // 2) Pedidos locales del outbox (Tauri only)
+    let offlinePending: KitchenOrder[] = [];
+    if (isTauri) {
+      try {
+        const outbox = await getPendingOrders();
+        // Filtrar los que tienen branchId distinto al filtro actual
+        offlinePending = outbox
+          .filter(o => !localIds.has(o.local_id))
+          .map(o => {
+            let payload: any = {};
+            try { payload = JSON.parse(o.payload); } catch {}
+            return {
+              id: 0,
+              localId: o.local_id,
+              isLocal: true,
+              orderNumber: o.local_id.slice(0, 8).toUpperCase(),
+              ticketNumber: o.local_id.slice(0, 4).toUpperCase(),
+              createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
+              items: (payload.items ?? []).map((it: any) => {
+                const product = products.find(p => p.id === it.productId);
+                return {
+                  id: it.productId,
+                  quantity: it.quantity,
+                  product: {
+                    name: it.productName ?? product?.name ?? '?',
+                    emoji: product?.emoji ?? '🍽️',
+                  },
+                  notes: it.notes,
+                };
+              }),
+            } as KitchenOrder;
+          })
+          .filter(o => {
+            // Filtrar por sucursal si hay un branchId activo
+            if (!branchId) return true;
+            // El payload no siempre trae branchId; si no está, asumir sucursal actual
+            // (esto es razonable porque las órdenes se crean desde el POS de la sucursal activa)
+            return true;
+          });
+      } catch { /* ignore */ }
+    }
+
+    setOrders([...offlinePending, ...serverPending]);
+  }, [token, branchId, cacheKey, isTauri, products]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
@@ -78,13 +167,48 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     return () => clearInterval(t);
   }, []);
 
-  const complete = async (id: number) => {
-    setCompleting(id);
-    const res = await apiFetch(token, `/orders/${id}/complete`, { method: 'PATCH' });
-    if (res.ok) {
-      setOrders(prev => prev.filter(o => o.id !== id));
-      onComplete();
+  const complete = (order: KitchenOrder) => {
+    const key = order.localId ?? `s${order.id}`;
+    setCompleting(key);
+
+    // Update optimista: remover de UI y del cache
+    setOrders(prev => {
+      const next = prev.filter(o => (o.localId ?? `s${o.id}`) !== key);
+      const cacheable = next.filter(o => !o.isLocal);
+      localStorage.setItem(cacheKey, JSON.stringify(cacheable));
+      return next;
+    });
+    onComplete();
+
+    // Encolar para sync (siempre — el servicio de sync lo procesará)
+    const enqueue = () => {
+      const queueRaw = localStorage.getItem('pos_pending_completes');
+      const queue: PendingComplete[] = queueRaw ? JSON.parse(queueRaw) : [];
+      queue.push({
+        ...(order.isLocal ? { localId: order.localId! } : { serverId: order.id }),
+        completedAt: new Date().toISOString(),
+      });
+      localStorage.setItem('pos_pending_completes', JSON.stringify(queue));
+    };
+    enqueue();
+
+    // Si está online y es pedido del servidor, intentar sync inmediato
+    if (navigator.onLine && !order.isLocal && order.id > 0) {
+      apiFetch(token, `/orders/${order.id}/complete`, { method: 'PATCH' })
+        .then(async res => {
+          if (res.ok || res.status === 404 || res.status === 409) {
+            // Quitar del queue
+            try {
+              const cur: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
+              const remaining = cur.filter(q => q.serverId !== order.id);
+              if (remaining.length === 0) localStorage.removeItem('pos_pending_completes');
+              else localStorage.setItem('pos_pending_completes', JSON.stringify(remaining));
+            } catch {}
+          }
+        })
+        .catch(() => { /* mantener en queue */ });
     }
+
     setCompleting(null);
   };
 
@@ -139,11 +263,18 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
         ) : (
           orders.map(order => {
             const style = urgencyStyle(order.createdAt, warningMins, dangerMins);
+            const key = order.localId ?? `s${order.id}`;
             return (
-              <div key={order.id} className={`${cardClass} ${style.card}`}>
+              <div key={key} className={`${cardClass} ${style.card}`}>
                 {/* Card header */}
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-white text-sm font-black">#{order.ticketNumber}</span>
+                  {order.isLocal ? (
+                    <span className="text-amber-300 text-[11px] font-black flex items-center gap-1" title="Pedido offline pendiente de sincronizar">
+                      📦 #{order.ticketNumber}
+                    </span>
+                  ) : (
+                    <span className="text-white text-sm font-black">#{order.ticketNumber}</span>
+                  )}
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 ${style.badge}`}>
                     <span className={`w-1 h-1 rounded-full inline-block ${style.dot}`} />
                     {elapsed(order.createdAt)}
@@ -152,8 +283,8 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
 
                 {/* Items */}
                 <div className="space-y-0.5">
-                  {order.items.map(item => (
-                    <div key={item.id} className="flex items-center gap-1">
+                  {order.items.map((item, i) => (
+                    <div key={`${item.id ?? 'x'}-${i}`} className="flex items-center gap-1">
                       <span className="text-xs">{item.product?.emoji || '🍽️'}</span>
                       <span className="text-slate-300 text-[11px] flex-1 truncate">{item.product?.name ?? '(eliminado)'}</span>
                       <span className="text-white text-[11px] font-bold shrink-0">×{item.quantity}</span>
@@ -163,10 +294,10 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
 
                 {/* Complete button */}
                 <button
-                  onClick={() => complete(order.id)}
-                  disabled={completing === order.id}
+                  onClick={() => complete(order)}
+                  disabled={completing === key}
                   className="w-full bg-slate-700/80 hover:bg-green-600 text-slate-300 hover:text-white text-[11px] font-semibold py-1 rounded transition disabled:opacity-50">
-                  {completing === order.id ? '...' : '✓ Listo'}
+                  {completing === key ? '...' : '✓ Listo'}
                 </button>
               </div>
             );
@@ -337,15 +468,24 @@ function CloseShiftModal({ onConfirm, onClose }: {
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
   const { token, user, hasPermission, activeBranchId, currency, getValidToken } = useAuth();
+  const toast = useToast();
   const isTauri = '__TAURI__' in window;
   const { isOnline, pendingCount, syncing } = useSync();
   const [forceOffline] = useState(() => localStorage.getItem('pos_force_offline') === 'true');
   const isEffectivelyOffline = forceOffline || !isOnline;
-  const [products, setProducts] = useState<ApiProduct[]>([]);
-  const [categories, setCategories] = useState<ApiCategory[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<ApiProduct[]>(() => {
+    try { return JSON.parse(localStorage.getItem('products_cache') ?? '{}').data ?? []; }
+    catch { return []; }
+  });
+  const [categories, setCategories] = useState<ApiCategory[]>(() => {
+    try { return JSON.parse(localStorage.getItem('categories_cache') ?? '{}').data ?? []; }
+    catch { return []; }
+  });
+  const [loading, setLoading] = useState(() => {
+    // Si tenemos cache, no mostrar loader
+    return !localStorage.getItem('products_cache');
+  });
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [checkoutMsg, setCheckoutMsg] = useState('');
   const [kitchenKey, setKitchenKey] = useState(0);
 
   const isAdmin = hasPermission('orders:view_all');
@@ -355,11 +495,13 @@ export default function HomePage() {
   const [shiftLoading, setShiftLoading] = useState(false);
   const [showOpenModal, setShowOpenModal]   = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
-  const [shiftError, setShiftError]         = useState('');
   const [printReport,  setPrintReport]      = useState<ShiftReportData | null>(null);
   const [printTicket,  setPrintTicket]      = useState<OrderTicketData | null>(null);
   const [printPhase,   setPrintPhase]       = useState<'client' | 'kitchen' | null>(null);
-  const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>({});
+  const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>(() => {
+    try { return JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}'); }
+    catch { return {}; }
+  });
   const [mobileCatId,  setMobileCatId]      = useState<number | null>(null);
   const layoutMode: 'grid' | 'columns' = orgSettings.posLayout === 'columns' ? 'columns' : 'grid';
   const showCategoryFilters = orgSettings.showCategoryFilters !== false;
@@ -483,13 +625,38 @@ export default function HomePage() {
       .catch(() => {});
   }, [isOnline, forceOffline, token, activeShift?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cargar settings una sola vez al montar
+  // Sincronizar cierre de caja pendiente cuando vuelve la conexión
+  useEffect(() => {
+    if (!isOnline || forceOffline || !token) return;
+    const pending = localStorage.getItem('pos_pending_shift_close');
+    if (!pending) return;
+    let body: any;
+    try { body = JSON.parse(pending); } catch { localStorage.removeItem('pos_pending_shift_close'); return; }
+    if (!body.shiftId || body.shiftId < 0) { localStorage.removeItem('pos_pending_shift_close'); return; }
+    apiFetch(token, `/shifts/${body.shiftId}/close`, {
+      method: 'PATCH',
+      body: JSON.stringify({ closingAmount: body.closingAmount, notes: body.notes, cancelPending: body.cancelPending }),
+    })
+      .then(async res => {
+        if (!res.ok) return;
+        localStorage.removeItem('pos_pending_shift_close');
+        toast.success('Cierre de caja sincronizado');
+      })
+      .catch(() => {});
+  }, [isOnline, forceOffline, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cargar settings una sola vez al montar (con cache offline)
   useEffect(() => {
     if (!token) return;
     apiFetch(token, '/organizations/my/settings')
       .then(r => r.ok ? r.json() : null)
-      .then(s => { if (s) setOrgSettings(s); })
-      .catch(() => {});
+      .then(s => {
+        if (s) {
+          setOrgSettings(s);
+          localStorage.setItem('pos_org_settings', JSON.stringify(s));
+        }
+      })
+      .catch(() => {/* offline: mantener cache */});
   }, [token]);
 
   // Servicio de sincronización offline (solo en Tauri)
@@ -500,7 +667,7 @@ export default function HomePage() {
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenShift = async (amount: number, notes: string) => {
-    setShiftLoading(true); setShiftError('');
+    setShiftLoading(true);
 
     if (!navigator.onLine || forceOffline) {
       const localShift: Shift = {
@@ -519,6 +686,7 @@ export default function HomePage() {
       setActiveShift(localShift);
       setShowOpenModal(false);
       setShiftLoading(false);
+      toast.warning('Caja abierta sin conexión — se sincronizará cuando vuelva el internet');
       return;
     }
 
@@ -531,15 +699,43 @@ export default function HomePage() {
       setActiveShift(data);
       localStorage.setItem('pos_active_shift', JSON.stringify(data));
       setShowOpenModal(false);
+      toast.success('Caja abierta');
     } else {
-      setShiftError(data.message ?? 'Error al abrir caja');
+      toast.error(data.message ?? 'Error al abrir caja');
     }
     setShiftLoading(false);
   };
 
   const handleCloseShift = async (amount: number, notes: string, cancelPending: boolean) => {
     if (!activeShift) return;
-    setShiftLoading(true); setShiftError('');
+    setShiftLoading(true);
+
+    // Caja local que nunca se sincronizó: solo limpiar todo (no existe en server)
+    if (activeShift.id === -1) {
+      localStorage.removeItem('pos_active_shift');
+      localStorage.removeItem('pos_pending_shift_open');
+      setActiveShift(null);
+      setShowCloseModal(false);
+      setKitchenKey(k => k + 1);
+      setShiftLoading(false);
+      toast.success('Caja cerrada (local)');
+      return;
+    }
+
+    // Caja real pero offline: encolar el cierre para sincronizar
+    if (!navigator.onLine || forceOffline) {
+      localStorage.setItem('pos_pending_shift_close', JSON.stringify({
+        shiftId: activeShift.id, closingAmount: amount, notes, cancelPending,
+      }));
+      localStorage.removeItem('pos_active_shift');
+      setActiveShift(null);
+      setShowCloseModal(false);
+      setKitchenKey(k => k + 1);
+      setShiftLoading(false);
+      toast.warning('Caja cerrada sin conexión — se sincronizará cuando vuelva el internet');
+      return;
+    }
+
     const res = await apiFetch(token!, `/shifts/${activeShift.id}/close`, {
       method: 'PATCH',
       body: JSON.stringify({ closingAmount: amount, notes, cancelPending }),
@@ -550,8 +746,10 @@ export default function HomePage() {
       setActiveShift(null);
       localStorage.removeItem('pos_active_shift');
       localStorage.removeItem('pos_pending_shift_open');
+      localStorage.removeItem('pos_pending_shift_close');
       setShowCloseModal(false);
       setKitchenKey(k => k + 1);
+      toast.success('Caja cerrada');
 
       // Auto-print si el flag está activado
       const settingsRes = await apiFetch(token!, '/organizations/my/settings');
@@ -566,7 +764,7 @@ export default function HomePage() {
       // El backend advierte sobre pendientes → pasar al paso de advertencia
       (CloseShiftModal as any)._setPending?.({ pendingCount: data.pendingCount, pendingOrders: data.pendingOrders });
     } else {
-      setShiftError(data.message ?? 'Error al cerrar caja');
+      toast.error(data.message ?? 'Error al cerrar caja');
     }
     setShiftLoading(false);
   };
@@ -586,8 +784,7 @@ export default function HomePage() {
 
     // POS requiere turno activo
     if (!activeShift) {
-      setCheckoutMsg('⚠️ Debes abrir la caja antes de cobrar');
-      setTimeout(() => setCheckoutMsg(''), 3000);
+      toast.warning('Debes abrir la caja antes de cobrar');
       return;
     }
 
@@ -639,8 +836,7 @@ export default function HomePage() {
       } else {
         const d = await res.json().catch(() => ({}));
         if (!isTauri) {
-          setCheckoutMsg(`⚠️ ${d.message ?? 'Error al registrar venta'}`);
-          setTimeout(() => setCheckoutMsg(''), 3000);
+          toast.error(d.message ?? 'Error al registrar venta');
           return;
         }
       }
@@ -693,15 +889,15 @@ export default function HomePage() {
       localStorage.setItem('last_offline_ticket', String(nextTicket));
     }
 
-    setCheckoutMsg(serverOrder
-      ? `✅ Venta registrada — ${currency} ${total.toFixed(2)}`
-      : `📦 Sin conexión — guardada (${currency} ${total.toFixed(2)})`
-    );
+    if (serverOrder) {
+      toast.success(`Venta registrada — ${currency} ${total.toFixed(2)}`);
+    } else {
+      toast.warning(`Sin conexión — venta guardada localmente (${currency} ${total.toFixed(2)})`);
+    }
     setCartItems([]);
-    if (serverOrder) setKitchenKey(k => k + 1);
+    setKitchenKey(k => k + 1);  // refrescar cocina (también para órdenes offline del outbox)
     setPrintTicket(ticketData);
     setPrintPhase('client');
-    setTimeout(() => setCheckoutMsg(''), 4000);
   };
 
   const shiftTime = activeShift
@@ -728,13 +924,13 @@ export default function HomePage() {
 
       {showOpenModal && (
         <OpenShiftModal
-          onClose={() => { setShowOpenModal(false); setShiftError(''); }}
+          onClose={() => setShowOpenModal(false)}
           onConfirm={handleOpenShift}
         />
       )}
       {showCloseModal && (
         <CloseShiftModal
-          onClose={() => { setShowCloseModal(false); setShiftError(''); }}
+          onClose={() => setShowCloseModal(false)}
           onConfirm={handleCloseShift}
         />
       )}
@@ -872,6 +1068,7 @@ export default function HomePage() {
               branchId={activeBranchId}
               warningMins={Number(orgSettings.kitchenWarningMins ?? 5)}
               dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
+              products={products}
             />
           )}
         </div>
@@ -887,6 +1084,7 @@ export default function HomePage() {
               warningMins={Number(orgSettings.kitchenWarningMins ?? 5)}
               dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
               vertical
+              products={products}
             />
           </div>
         )}
@@ -919,12 +1117,6 @@ export default function HomePage() {
                   🟢 Abrir Caja
                 </button>
               )
-            )}
-
-            {shiftError && (
-              <span className="block text-red-400 text-[11px] bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-md">
-                ⚠️ {shiftError}
-              </span>
             )}
 
             {/* Estado y fecha */}
@@ -964,18 +1156,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Toast flotante de checkout */}
-      {checkoutMsg && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 border px-4 py-2 rounded-xl text-sm font-medium shadow-lg ${
-          checkoutMsg.startsWith('⚠️')
-            ? 'bg-red-500/95 border-red-400 text-white'
-            : checkoutMsg.startsWith('📦')
-              ? 'bg-amber-500/95 border-amber-400 text-white'
-              : 'bg-green-500/95 border-green-400 text-white'
-        }`}>
-          {checkoutMsg}
-        </div>
-      )}
     </div>
   );
 }
