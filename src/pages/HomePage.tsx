@@ -145,13 +145,6 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
                 };
               }),
             } as KitchenOrder;
-          })
-          .filter(o => {
-            // Filtrar por sucursal si hay un branchId activo
-            if (!branchId) return true;
-            // El payload no siempre trae branchId; si no está, asumir sucursal actual
-            // (esto es razonable porque las órdenes se crean desde el POS de la sucursal activa)
-            return true;
           });
       } catch { /* ignore */ }
     }

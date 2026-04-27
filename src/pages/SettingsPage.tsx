@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { listPrinters, getSavedPrinter, savePrinter } from '../hooks/usePrinterStore';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -695,7 +695,7 @@ function RoleModal({
         </div>
 
         <div className="flex items-center justify-between border-t border-slate-700 px-6 py-4 shrink-0">
-          {error ? <p className="text-sm text-red-400">{error}</p> : <p className="text-xs text-slate-500">{selected.size} permiso(s)</p>}
+          <p className="text-xs text-slate-500">{selected.size} permiso(s)</p>
           <div className="flex gap-3">
             <button onClick={onClose} className="px-4 py-2 text-sm text-slate-400 hover:text-white transition">Cancelar</button>
             {!isSystemRole && (
