@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useSync } from '../hooks/useSync';
 import type { Branch } from '../context/AuthContext';
 
 interface SidebarProps {
@@ -7,16 +8,16 @@ interface SidebarProps {
   onNavigate: (page: string) => void;
 }
 
-const allMenuItems = [
-  { id: 'home',          icon: '🏠', label: 'Inicio',        permission: 'sales:view' },
-  { id: 'orders',        icon: '📋', label: 'Pedidos',        permission: 'sales:view' },
-  { id: 'qrpayment',    icon: '📲', label: 'Cobro con QR',   permission: 'sales:view' },
-  { id: 'shifts',        icon: '🕐', label: 'Turnos',         permission: 'shifts:manage' },
-  { id: 'products',      icon: '📦', label: 'Productos',      permission: 'products:view' },
-  { id: 'categories',    icon: '🗂️', label: 'Categorías',    permission: 'products:manage' },
-  { id: 'customers',     icon: '👥', label: 'Clientes',       permission: 'customers:view' },
-  { id: 'reports',       icon: '📊', label: 'Reportes',       permission: 'reports:view' },
-  { id: 'settings',      icon: '⚙️', label: 'Configuración', permission: 'org:manage' },
+const allMenuItems: { id: string; icon: string; label: string; permission: string; offlineSupported?: boolean }[] = [
+  { id: 'home',          icon: '🏠', label: 'Inicio',        permission: 'sales:view',      offlineSupported: true  },
+  { id: 'orders',        icon: '📋', label: 'Pedidos',        permission: 'sales:view',      offlineSupported: false },
+  // { id: 'qrpayment',    icon: '📲', label: 'Cobro con QR',   permission: 'sales:view',      offlineSupported: false }, // TODO: reactivar cuando funcione
+  { id: 'shifts',        icon: '🕐', label: 'Turnos',         permission: 'shifts:manage',   offlineSupported: false },
+  { id: 'products',      icon: '📦', label: 'Productos',      permission: 'products:view',   offlineSupported: false },
+  { id: 'categories',    icon: '🗂️', label: 'Categorías',    permission: 'products:manage', offlineSupported: false },
+  { id: 'customers',     icon: '👥', label: 'Clientes',       permission: 'customers:view',  offlineSupported: false },
+  { id: 'reports',       icon: '📊', label: 'Reportes',       permission: 'reports:view',    offlineSupported: false },
+  { id: 'settings',      icon: '⚙️', label: 'Configuración', permission: 'org:manage',      offlineSupported: true  },
 ];
 
 // ─── User popover ─────────────────────────────────────────────────────────────
@@ -98,6 +99,9 @@ function UserPopover({ onClose }: { onClose: () => void }) {
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   const { user, hasPermission, branches, activeBranchId, setActiveBranchId } = useAuth();
+  const { isOnline } = useSync();
+  const forceOffline = typeof window !== 'undefined' && localStorage.getItem('pos_force_offline') === 'true';
+  const isEffectivelyOffline = !isOnline || forceOffline;
   const [collapsed, setCollapsed] = useState(() => {
     const stored = localStorage.getItem('sidebar_collapsed');
     if (stored !== null) return stored === 'true';
@@ -179,22 +183,37 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-        {menuItems.map(item => (
-          <button
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            className={`w-full flex items-center py-2.5 rounded-xl transition-all duration-150 text-left group
-              ${collapsed ? 'justify-center px-0' : 'gap-3 px-3'}
-              ${activePage === item.id
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
-              }`}
-            title={collapsed ? item.label : undefined}
-          >
-            <span className="text-xl shrink-0">{item.icon}</span>
-            {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
-          </button>
-        ))}
+        {menuItems.map(item => {
+          const offlineSupported = (item as any).offlineSupported !== false; // superadmin items: true por default
+          const isDisabled = isEffectivelyOffline && !offlineSupported;
+          const tooltipMsg = isDisabled
+            ? `${item.label} — no disponible sin conexión`
+            : (collapsed ? item.label : undefined);
+          return (
+            <button
+              key={item.id}
+              onClick={() => !isDisabled && onNavigate(item.id)}
+              disabled={isDisabled}
+              className={`w-full flex items-center py-2.5 rounded-xl transition-all duration-150 text-left group
+                ${collapsed ? 'justify-center px-0' : 'gap-3 px-3'}
+                ${isDisabled
+                  ? 'opacity-40 cursor-not-allowed text-slate-500'
+                  : activePage === item.id
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                }`}
+              title={tooltipMsg}
+            >
+              <span className="text-xl shrink-0 relative">
+                {item.icon}
+                {isDisabled && (
+                  <span className="absolute -top-1 -right-1 text-[8px] leading-none">🔒</span>
+                )}
+              </span>
+              {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
+            </button>
+          );
+        })}
       </nav>
 
       {/* User avatar button — opens popover */}
