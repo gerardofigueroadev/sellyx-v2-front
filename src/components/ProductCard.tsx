@@ -42,6 +42,7 @@ export default function ProductCard({ product, onAdd, quantity = 0, categoryColo
     <button
       onClick={handleAdd}
       disabled={!product.isAvailable}
+      title={!product.isAvailable ? 'No disponible temporalmente' : undefined}
       style={{
         width: '100%',
         textAlign: 'left',

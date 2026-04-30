@@ -6,6 +6,24 @@ import API_URL from '../config';
 const API = `${API_URL}/api`;
 
 interface Category { id: number; name: string; emoji: string; color: string; }
+
+const GRADIENTS: Record<string, string> = {
+  orange: 'bg-gradient-to-r from-orange-600 to-amber-500',
+  blue:   'bg-gradient-to-r from-blue-600 to-cyan-500',
+  purple: 'bg-gradient-to-r from-purple-600 to-pink-500',
+  green:  'bg-gradient-to-r from-green-600 to-emerald-500',
+  red:    'bg-gradient-to-r from-red-600 to-rose-500',
+  yellow: 'bg-gradient-to-r from-yellow-500 to-amber-400',
+  pink:   'bg-gradient-to-r from-pink-600 to-fuchsia-500',
+  cyan:   'bg-gradient-to-r from-cyan-600 to-teal-500',
+};
+const COLOR_HEX: Record<string, string> = {
+  orange: '#f97316', blue: '#3b82f6', purple: '#a855f7',
+  green:  '#22c55e', red:  '#ef4444', yellow: '#eab308',
+  pink:   '#ec4899', cyan: '#06b6d4',
+};
+const getGradient = (color: string) => GRADIENTS[color] ?? GRADIENTS.blue;
+const getAccent = (color?: string) => COLOR_HEX[color ?? 'blue'] ?? COLOR_HEX.blue;
 interface Branch { id: number; name: string; }
 
 interface Product {
@@ -16,6 +34,7 @@ interface Product {
   emoji: string;
   isAvailable: boolean;
   stock: number;
+  sortOrder?: number;
   category: Category;
   branch: Branch | null;
 }
@@ -32,6 +51,89 @@ interface FormData {
 const emptyForm: FormData = { name: '', description: '', price: '', emoji: '🍽️', isAvailable: true, categoryId: '' };
 
 const EMOJIS = ['🍔','🍕','🌭','🌮','🥪','🍗','🍖','🥩','🍜','🍝','🍛','🥗','🥙','🌯','🥤','🧃','☕','🍵','🧋','💧','🍺','🥛','🍟','🧀','🥚','🍳','🥞','🧇','🍰','🎂','🍩','🍪','🍫','🍦','🧁','🍮','🫙','🥫','🧂'];
+
+// ─── Product Row (compact card en columna) ────────────────────────────────────
+function ProductRow({ product, accent, isAdmin, currency, isFirst, isLast, onMoveUp, onMoveDown, onToggle, onEdit, onDelete }: {
+  product: Product;
+  accent?: string;
+  isAdmin: boolean;
+  currency: string;
+  isFirst: boolean;
+  isLast: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '5px 9px 5px 11px',
+        borderRadius: 9,
+        border: `1.5px solid ${accent ? `${accent}40` : 'rgba(71,85,105,0.4)'}`,
+        background: accent ? `${accent}0d` : 'transparent',
+        opacity: product.isAvailable ? 1 : 0.5,
+        overflow: 'hidden',
+      }}
+      className="group"
+    >
+      {/* Barra lateral de categoría */}
+      {accent && (
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0, width: 4,
+          borderRadius: '9px 0 0 9px',
+          background: accent,
+        }} />
+      )}
+
+      {/* Emoji */}
+      <span style={{ fontSize: 17, lineHeight: 1, flexShrink: 0, width: 20, textAlign: 'center' }}>
+        {product.emoji || '🍽️'}
+      </span>
+
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2, color: 'white', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {product.name}
+        </p>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa' }}>
+            {currency} {Number(product.price).toFixed(2)}
+          </span>
+          {isAdmin && (
+            <span className="text-[9px] px-1 py-0.5 rounded font-medium bg-slate-700/70 text-slate-400 truncate">
+              {product.branch ? `📍${product.branch.name}` : '🌐'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Acciones */}
+      <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition">
+        {/* Flechas de orden */}
+        <div className="flex flex-col">
+          <button onClick={onMoveUp} disabled={isFirst} title="Subir"
+            className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▲</button>
+          <button onClick={onMoveDown} disabled={isLast} title="Bajar"
+            className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▼</button>
+        </div>
+        <button onClick={onToggle} title={product.isAvailable ? 'Deshabilitar' : 'Habilitar'}
+          className={`p-1 rounded text-xs transition ${product.isAvailable ? 'hover:bg-green-500/15' : 'hover:bg-slate-700'}`}>
+          {product.isAvailable ? '✅' : '⏸️'}
+        </button>
+        <button onClick={onEdit} title="Editar"
+          className="p-1 rounded text-slate-400 hover:text-blue-400 hover:bg-blue-500/15 transition text-xs">✏️</button>
+        <button onClick={onDelete} title="Eliminar"
+          className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/15 transition text-xs">🗑️</button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Copy modal ───────────────────────────────────────────────────────────────
 function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
@@ -283,6 +385,41 @@ export default function ProductsPage() {
     } catch { toast.error('Error al eliminar'); }
   };
 
+  /** Mueve un producto arriba/abajo dentro de su categoría. */
+  const moveProduct = async (productId: number, direction: 'up' | 'down') => {
+    const target = products.find(p => p.id === productId);
+    if (!target) return;
+    // Productos en la misma categoría, ordenados por sortOrder actual
+    const inCategory = products
+      .filter(p => p.category?.id === target.category?.id)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
+    const idx = inCategory.findIndex(p => p.id === productId);
+    const otherIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (otherIdx < 0 || otherIdx >= inCategory.length) return;
+
+    // Swap en el array local
+    const newOrder = [...inCategory];
+    [newOrder[idx], newOrder[otherIdx]] = [newOrder[otherIdx], newOrder[idx]];
+    // Reasignar sortOrder secuencial (1, 2, 3, ...) a toda la categoría
+    const items = newOrder.map((p, i) => ({ id: p.id, sortOrder: i + 1 }));
+    const sortMap = new Map(items.map(it => [it.id, it.sortOrder]));
+
+    // Optimistic update
+    setProducts(prev => prev.map(p => sortMap.has(p.id) ? { ...p, sortOrder: sortMap.get(p.id)! } : p));
+
+    try {
+      const res = await fetch(`${API}/products/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Error al reordenar');
+      fetchAll(); // revertir desde el server
+    }
+  };
+
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) &&
     (filterCategoryId === null || p.category?.id === filterCategoryId)
@@ -395,56 +532,58 @@ export default function ProductsPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filtered.map(p => (
-              <div
-                key={p.id}
-                className={`bg-slate-900/60 border rounded-2xl p-4 flex flex-col gap-3 transition group
-                  ${p.isAvailable ? 'border-slate-700/50 hover:border-slate-600' : 'border-slate-700/20 opacity-60'}`}
-              >
-                {/* Top row */}
-                <div className="flex items-start justify-between">
-                  <div className="w-14 h-14 bg-slate-700/50 rounded-xl flex items-center justify-center text-3xl shrink-0">
-                    {p.emoji || '🍽️'}
-                  </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => toggleAvailable(p)} title={p.isAvailable ? 'Deshabilitar' : 'Habilitar'}
-                      className={`p-1.5 rounded-lg text-sm transition ${p.isAvailable ? 'text-green-400 hover:bg-green-500/10' : 'text-slate-500 hover:bg-slate-700'}`}>
-                      {p.isAvailable ? '✅' : '⏸️'}
-                    </button>
-                    <button onClick={() => openEdit(p)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition text-sm">✏️</button>
-                    <button onClick={() => setDeleteId(p.id)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition text-sm">🗑️</button>
-                  </div>
-                </div>
+          (() => {
+            const visibleCats = filterCategoryId === null
+              ? categories.filter(c => filtered.some(p => p.category?.id === c.id))
+              : categories.filter(c => c.id === filterCategoryId);
+            const uncategorized = filtered.filter(p => !p.category);
 
-                {/* Info */}
-                <div>
-                  <h3 className="text-white font-semibold text-sm leading-tight">{p.name}</h3>
-                  {p.description && (
-                    <p className="text-slate-500 text-xs mt-1 line-clamp-2 leading-relaxed">{p.description}</p>
-                  )}
-                </div>
-
-                {/* Footer */}
-                <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-700/50">
-                  <span className="text-blue-400 font-bold text-base">{currency} {Number(p.price).toFixed(2)}</span>
-                  <div className="flex items-center gap-1.5">
-                    {/* Branch badge — only shown when admin with multiple branches */}
-                    {isAdmin && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-slate-700 text-slate-400">
-                        {p.branch ? `📍 ${p.branch.name}` : '🌐 Global'}
-                      </span>
-                    )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.isAvailable ? 'bg-green-500/15 text-green-400' : 'bg-slate-700 text-slate-500'}`}>
-                      {p.isAvailable ? 'Disponible' : 'No disponible'}
-                    </span>
+            return (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${visibleCats.length + (uncategorized.length > 0 ? 1 : 0)}, minmax(180px, 1fr))`,
+                gap: 12,
+                alignItems: 'start',
+              }}>
+                {visibleCats.map(cat => {
+                  const catProducts = filtered
+                    .filter(p => p.category?.id === cat.id)
+                    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+                  return (
+                    <div key={cat.id} className="flex flex-col gap-1.5">
+                      {/* Header de categoría */}
+                      <div className={`${getGradient(cat.color)} flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm`}>
+                        <span style={{ fontSize: 16 }}>{cat.emoji || '🍽️'}</span>
+                        <span className="text-white font-bold text-xs flex-1 truncate">{cat.name}</span>
+                        <span className="text-white/70 text-[10px] font-bold">{catProducts.length}</span>
+                      </div>
+                      {catProducts.map((p, i) => (
+                        <ProductRow key={p.id} product={p} accent={getAccent(cat.color)} isAdmin={isAdmin} currency={currency}
+                          isFirst={i === 0} isLast={i === catProducts.length - 1}
+                          onMoveUp={() => moveProduct(p.id, 'up')} onMoveDown={() => moveProduct(p.id, 'down')}
+                          onToggle={() => toggleAvailable(p)} onEdit={() => openEdit(p)} onDelete={() => setDeleteId(p.id)} />
+                      ))}
+                    </div>
+                  );
+                })}
+                {uncategorized.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    <div className="bg-slate-700 flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm">
+                      <span style={{ fontSize: 16 }}>❓</span>
+                      <span className="text-white font-bold text-xs flex-1 truncate">Sin categoría</span>
+                      <span className="text-white/70 text-[10px] font-bold">{uncategorized.length}</span>
+                    </div>
+                    {uncategorized.map(p => (
+                      <ProductRow key={p.id} product={p} isAdmin={isAdmin} currency={currency}
+                        isFirst isLast
+                        onMoveUp={() => {}} onMoveDown={() => {}}
+                        onToggle={() => toggleAvailable(p)} onEdit={() => openEdit(p)} onDelete={() => setDeleteId(p.id)} />
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })()
         )}
       </div>
 
