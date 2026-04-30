@@ -121,6 +121,33 @@ export async function syncPendingCompletes(
   else localStorage.setItem('pos_pending_completes', JSON.stringify(remaining));
 }
 
+export async function syncPendingReorders(
+  getToken: () => Promise<string | null>,
+  apiBase: string,
+): Promise<void> {
+  if (!navigator.onLine) return;
+  const raw = localStorage.getItem('pos_pending_reorders');
+  if (!raw) return;
+  let merged: Record<string, number>;
+  try { merged = JSON.parse(raw); } catch { localStorage.removeItem('pos_pending_reorders'); return; }
+  const ids = Object.keys(merged);
+  if (ids.length === 0) { localStorage.removeItem('pos_pending_reorders'); return; }
+
+  const token = await getToken();
+  if (!token) return;
+
+  const items = ids.map(id => ({ id: Number(id), sortOrder: merged[id] }));
+  try {
+    const res = await fetch(`${apiBase}/products/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) localStorage.removeItem('pos_pending_reorders');
+  } catch { /* mantener para próximo intento */ }
+}
+
 export async function syncPendingSettings(
   getToken: () => Promise<string | null>,
   apiBase: string,
@@ -158,6 +185,7 @@ export function startSyncService(
     await syncPendingOrders(getToken, apiBase).catch(() => {});
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
     await syncPendingSettings(getToken, apiBase).catch(() => {});
+    await syncPendingReorders(getToken, apiBase).catch(() => {});
   };
 
   window.addEventListener('online', trySync);

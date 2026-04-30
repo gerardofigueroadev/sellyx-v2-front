@@ -404,8 +404,34 @@ export default function ProductsPage() {
     const items = newOrder.map((p, i) => ({ id: p.id, sortOrder: i + 1 }));
     const sortMap = new Map(items.map(it => [it.id, it.sortOrder]));
 
-    // Optimistic update
+    // Optimistic update: state + cache local de productos (para HomePage)
     setProducts(prev => prev.map(p => sortMap.has(p.id) ? { ...p, sortOrder: sortMap.get(p.id)! } : p));
+    try {
+      const cached = localStorage.getItem('products_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed.data)) {
+          parsed.data = parsed.data.map((p: any) => sortMap.has(p.id) ? { ...p, sortOrder: sortMap.get(p.id) } : p);
+          localStorage.setItem('products_cache', JSON.stringify(parsed));
+        }
+      }
+    } catch {/* ignore */}
+
+    // Acumular en queue offline: merge de items por id (last-write-wins)
+    const enqueueOffline = () => {
+      try {
+        const raw = localStorage.getItem('pos_pending_reorders') ?? '{}';
+        const merged: Record<number, number> = JSON.parse(raw);
+        items.forEach(it => { merged[it.id] = it.sortOrder; });
+        localStorage.setItem('pos_pending_reorders', JSON.stringify(merged));
+      } catch {/* ignore */}
+    };
+
+    if (!navigator.onLine) {
+      enqueueOffline();
+      toast.warning('Orden guardado sin conexión — se sincronizará cuando vuelva el internet');
+      return;
+    }
 
     try {
       const res = await fetch(`${API}/products/reorder`, {
@@ -415,8 +441,9 @@ export default function ProductsPage() {
       });
       if (!res.ok) throw new Error();
     } catch {
-      toast.error('Error al reordenar');
-      fetchAll(); // revertir desde el server
+      // Falló por red u otro motivo: encolar para sync posterior, mantener cambio local
+      enqueueOffline();
+      toast.warning('Orden guardado localmente — se sincronizará automáticamente');
     }
   };
 

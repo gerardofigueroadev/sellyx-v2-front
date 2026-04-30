@@ -219,6 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('pos_pending_shift_close');
     localStorage.removeItem('pos_pending_settings_patch');
     localStorage.removeItem('pos_pending_completes');
+    localStorage.removeItem('pos_pending_reorders');
     localStorage.removeItem('products_cache');
     localStorage.removeItem('categories_cache');
     // Limpiar caches de cocina (todas las branches)
