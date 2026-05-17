@@ -1,13 +1,23 @@
+// Evita que la ventana de PowerShell parpadee al ejecutar comandos.
+// 0x08000000 = CREATE_NO_WINDOW (winbase.h).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Lista las impresoras instaladas en Windows via PowerShell
 #[tauri::command]
 fn list_printers() -> Vec<String> {
-    let out = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-Printer | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress",
-        ])
-        .output();
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-Command",
+        "Get-Printer | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress",
+    ]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd.output();
 
     match out {
         Ok(o) => {
@@ -37,11 +47,14 @@ fn set_default_printer(name: String) -> bool {
         "(New-Object -ComObject WScript.Network).SetDefaultPrinter('{}')",
         name.replace('\'', "''")
     );
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", &script]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

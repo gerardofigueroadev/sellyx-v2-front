@@ -49,6 +49,26 @@ interface PendingComplete {
   completedAt: string;
 }
 
+// Ventana de gracia tras un complete exitoso: aunque el queue se "purgue",
+// mantenemos los IDs filtrados localmente este tiempo para absorber el lag
+// del backend (Railway) que puede devolver la orden como pending un rato más.
+const COMPLETE_TTL_MS = 60_000;
+
+// IDs marcados como completados en este momento (sync en vuelo) — defensa en
+// profundidad para que load() no los repinte aunque el cache/servidor los traiga.
+const inFlightCompletes: { serverIds: Set<number>; localIds: Set<string> } = {
+  serverIds: new Set(),
+  localIds: new Set(),
+};
+
+// Diagnóstico: IDs que pasaron por complete() en esta sesión. NO se usan para
+// filtrar (eso lo hace inFlightCompletes + TTL del queue) — solo para detectar
+// reaparición y loggearla cuando el filtro real ya expiró.
+const everCompletedThisSession: { serverIds: Map<number, string>; localIds: Map<string, string> } = {
+  serverIds: new Map(),
+  localIds: new Map(),
+};
+
 function elapsed(dateStr: string) {
   const m = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
   if (m < 1) return '< 1 min';
@@ -70,18 +90,27 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
   const tauri = isTauri();
   const cacheKey = `pos_kitchen_pending${branchId ? `_${branchId}` : ''}`;
 
-  // IDs marcados como completados localmente (esperando sync) — se filtran de la lista
+  // IDs marcados como completados localmente — se filtran de la lista.
+  // Incluye:
+  //  1) Pending completes en queue (aún sin sincronizar al backend).
+  //  2) Recent completes: entradas con completedAt dentro del TTL aunque el
+  //     PATCH ya respondió 200 (ventana de gracia para lag del backend).
+  //  3) In-flight completes en memoria (PATCH disparado, sin respuesta aún).
   const getCompletedLocally = (): { serverIds: Set<number>; localIds: Set<string> } => {
+    const serverIds = new Set<number>(inFlightCompletes.serverIds);
+    const localIds = new Set<string>(inFlightCompletes.localIds);
     try {
       const queue: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
-      const serverIds = new Set<number>();
-      const localIds = new Set<string>();
+      const now = Date.now();
       queue.forEach(q => {
+        // Filtra entradas más viejas que el TTL (se consideran limpias)
+        const age = now - new Date(q.completedAt).getTime();
+        if (age > COMPLETE_TTL_MS) return;
         if (q.serverId) serverIds.add(q.serverId);
         if (q.localId) localIds.add(q.localId);
       });
-      return { serverIds, localIds };
-    } catch { return { serverIds: new Set(), localIds: new Set() }; }
+    } catch { /* devolvemos lo que haya del in-flight set */ }
+    return { serverIds, localIds };
   };
 
   const [orders, setOrders] = useState<KitchenOrder[]>(() => {
@@ -98,9 +127,11 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
   const load = useCallback(async () => {
     const { serverIds, localIds } = getCompletedLocally();
     const qs = branchId ? `?branchId=${branchId}` : '';
+    const loadStart = Date.now();
 
     // 1) Pedidos del servidor (con cache offline)
     let serverPending: KitchenOrder[] = [];
+    let source: 'server' | 'cache-after-error' | 'cache-after-throw' = 'server';
     try {
       const res = await apiFetch(token, `/orders${qs}`);
       if (res.ok) {
@@ -108,12 +139,45 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
         serverPending = all.filter((o: any) => o.status === 'pending');
         localStorage.setItem(cacheKey, JSON.stringify(serverPending));
       } else {
+        source = 'cache-after-error';
         try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
       }
     } catch {
+      source = 'cache-after-throw';
       try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
     }
+
+    // Detectar IDs que el servidor/cache trajo PERO están en el filtro local
+    // (señal de reaparición — el backend aún no refleja el complete, o falló)
+    const blocked = serverPending.filter(o => serverIds.has(o.id));
+    if (blocked.length > 0) {
+      console.warn('[KITCHEN] load: blocked by local filter', {
+        source,
+        count: blocked.length,
+        ids: blocked.map(o => ({ id: o.id, ticket: o.ticketNumber })),
+        filterServerIds: Array.from(serverIds),
+        filterLocalIds: Array.from(localIds),
+        elapsedMs: Date.now() - loadStart,
+      });
+    }
     serverPending = serverPending.filter(o => !serverIds.has(o.id));
+
+    // Reaparición real: ticket que ya pasó el filtro (TTL caducó) pero fue
+    // completado en esta sesión. Si esto ocurre el backend nunca persistió
+    // el cambio de status — el bug reportado por el cliente.
+    const reappeared = serverPending.filter(o => everCompletedThisSession.serverIds.has(o.id));
+    if (reappeared.length > 0) {
+      console.warn('[KITCHEN] load: REAPPEARED after TTL (backend nunca cambió status)', {
+        source,
+        count: reappeared.length,
+        tickets: reappeared.map(o => ({
+          id: o.id,
+          ticket: o.ticketNumber,
+          completedAt: everCompletedThisSession.serverIds.get(o.id),
+          minutesAgo: Math.round((Date.now() - new Date(everCompletedThisSession.serverIds.get(o.id)!).getTime()) / 60000),
+        })),
+      });
+    }
 
     // 2) Pedidos locales del outbox (Tauri only)
     let offlinePending: KitchenOrder[] = [];
@@ -150,6 +214,20 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
       } catch { /* ignore */ }
     }
 
+    // Reaparición de orden local: completada en sesión pero el outbox aún la trae
+    const localReappeared = offlinePending.filter(o => o.localId && everCompletedThisSession.localIds.has(o.localId));
+    if (localReappeared.length > 0) {
+      console.warn('[KITCHEN] load: LOCAL order reappeared (outbox sin completar a backend)', {
+        count: localReappeared.length,
+        tickets: localReappeared.map(o => ({
+          localId: o.localId,
+          ticket: o.ticketNumber,
+          completedAt: everCompletedThisSession.localIds.get(o.localId!),
+          minutesAgo: Math.round((Date.now() - new Date(everCompletedThisSession.localIds.get(o.localId!)!).getTime()) / 60000),
+        })),
+      });
+    }
+
     setOrders([...offlinePending, ...serverPending]);
   }, [token, branchId, cacheKey, tauri, products]);
 
@@ -165,6 +243,24 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     const key = order.localId ?? `s${order.id}`;
     setCompleting(key);
 
+    console.warn('[KITCHEN] complete: intent', {
+      ticketNumber: order.ticketNumber,
+      isLocal: !!order.isLocal,
+      serverId: order.id,
+      localId: order.localId,
+      online: navigator.onLine,
+      at: new Date().toISOString(),
+    });
+
+    // Marcar como in-flight para que load() lo excluya aunque el cache lo traiga
+    if (order.isLocal && order.localId) inFlightCompletes.localIds.add(order.localId);
+    else if (order.id > 0) inFlightCompletes.serverIds.add(order.id);
+
+    // Registrar en el "alguna vez completado" para diagnosticar reaparición
+    const nowIso = new Date().toISOString();
+    if (order.localId) everCompletedThisSession.localIds.set(order.localId, nowIso);
+    if (order.id > 0) everCompletedThisSession.serverIds.set(order.id, nowIso);
+
     // Update optimista: remover de UI y del cache
     setOrders(prev => {
       const next = prev.filter(o => (o.localId ?? `s${o.id}`) !== key);
@@ -174,13 +270,16 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     });
     onComplete();
 
-    // Encolar para sync (siempre — el servicio de sync lo procesará)
+    // Encolar para sync (siempre — el servicio de sync lo procesará).
+    // La entrada NO se borra al 200: se purga por TTL en getCompletedLocally,
+    // dando una ventana de gracia para que el backend refleje el cambio.
+    const completedAt = new Date().toISOString();
     const enqueue = () => {
       const queueRaw = localStorage.getItem('pos_pending_completes');
       const queue: PendingComplete[] = queueRaw ? JSON.parse(queueRaw) : [];
       queue.push({
         ...(order.isLocal ? { localId: order.localId! } : { serverId: order.id }),
-        completedAt: new Date().toISOString(),
+        completedAt,
       });
       localStorage.setItem('pos_pending_completes', JSON.stringify(queue));
     };
@@ -190,17 +289,55 @@ function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, da
     if (navigator.onLine && !order.isLocal && order.id > 0) {
       apiFetch(token, `/orders/${order.id}/complete`, { method: 'PATCH' })
         .then(async res => {
-          if (res.ok || res.status === 404 || res.status === 409) {
-            // Quitar del queue
+          // Verificar que el backend realmente cambió el status antes de
+          // considerar la sincronización confirmada. 404/409 = ya no aplica.
+          let confirmed = res.status === 404 || res.status === 409;
+          let bodyStatus: string | undefined;
+          if (res.ok) {
+            try {
+              const body = await res.json();
+              bodyStatus = body?.status;
+              confirmed = body?.status === 'completed';
+            } catch { /* respuesta sin body — confiar en el 200 */
+              confirmed = true;
+            }
+          }
+          console.warn('[KITCHEN] complete: PATCH response', {
+            serverId: order.id,
+            httpStatus: res.status,
+            bodyStatus,
+            confirmed,
+          });
+          if (confirmed) {
+            // Liberar el in-flight; marcar la entrada del queue como confirmada
+            // para que el sync service no reintente el PATCH. El filtro por TTL
+            // del queue mantiene la ventana de gracia los siguientes 60s.
+            inFlightCompletes.serverIds.delete(order.id);
             try {
               const cur: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
-              const remaining = cur.filter(q => q.serverId !== order.id);
-              if (remaining.length === 0) localStorage.removeItem('pos_pending_completes');
-              else localStorage.setItem('pos_pending_completes', JSON.stringify(remaining));
-            } catch {}
+              const updated = cur.map(q =>
+                q.serverId === order.id && q.completedAt === completedAt
+                  ? { ...q, confirmed: true }
+                  : q
+              );
+              localStorage.setItem('pos_pending_completes', JSON.stringify(updated));
+            } catch { /* ignore — el sync service hará el flag en su próximo ciclo */ }
           }
+          // Si no se confirmó, mantener in-flight y queue — el sync service reintenta.
         })
-        .catch(() => { /* mantener en queue */ });
+        .catch(e => {
+          console.warn('[KITCHEN] complete: PATCH error', {
+            serverId: order.id,
+            error: String(e),
+          });
+          /* mantener in-flight + queue para próximo intento */
+        });
+    } else {
+      console.warn('[KITCHEN] complete: PATCH skipped (offline/local/no-id)', {
+        online: navigator.onLine,
+        isLocal: !!order.isLocal,
+        serverId: order.id,
+      });
     }
 
     setCompleting(null);
@@ -313,6 +450,59 @@ interface Shift {
 }
 
 // ─── Modal Abrir Caja ─────────────────────────────────────────────────────────
+// ─── Modal Confirmación de Impresión ──────────────────────────────────────────
+// TODO (deuda técnica): hoy ignora el flag `autoPrintTicketOnOrder` por decisión
+// de negocio — siempre pregunta. Reconciliar con la configuración más adelante.
+function PrintConfirmModal({ onChoose, onClose }: {
+  onChoose: (choice: 'client' | 'kitchen' | 'both') => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🖨️</span>
+            <h2 className="text-white font-bold">Imprimir ticket</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-white text-xl">✕</button>
+        </div>
+        <div className="px-6 py-4 text-slate-300 text-sm">
+          ¿Desea imprimir el ticket en el POS?
+        </div>
+        <div className="grid grid-cols-1 gap-2 px-6 pb-4">
+          <button
+            onClick={() => onChoose('both')}
+            className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition"
+          >
+            Imprimir ambos (cliente + cocina)
+          </button>
+          <button
+            onClick={() => onChoose('client')}
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-slate-700 hover:bg-slate-600 transition"
+          >
+            Solo cliente
+          </button>
+          <button
+            onClick={() => onChoose('kitchen')}
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-slate-700 hover:bg-slate-600 transition"
+          >
+            Solo cocina
+          </button>
+        </div>
+        <div className="px-6 pb-5">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-700/50 transition"
+          >
+            No imprimir
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OpenShiftModal({ onConfirm, onClose }: {
   onConfirm: (amount: number, notes: string) => void;
   onClose: () => void;
@@ -492,6 +682,8 @@ export default function HomePage() {
   const [printReport,  setPrintReport]      = useState<ShiftReportData | null>(null);
   const [printTicket,  setPrintTicket]      = useState<OrderTicketData | null>(null);
   const [printPhase,   setPrintPhase]       = useState<'client' | 'kitchen' | null>(null);
+  const [pendingPrintTicket, setPendingPrintTicket] = useState<OrderTicketData | null>(null);
+  const [printChoice,  setPrintChoice]      = useState<'client' | 'kitchen' | 'both' | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>(() => {
     try { return JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}'); }
     catch { return {}; }
@@ -513,12 +705,13 @@ export default function HomePage() {
   useEffect(() => {
     if (!printTicket || !printPhase) return;
     const onAfterPrint = () => {
-      if (printPhase === 'client' && orgSettings.autoPrintTicketOnOrder) {
-        // Avanzar a cocina en el siguiente ciclo de render
+      // Solo encadena cocina cuando el usuario eligió "ambos" en el modal
+      if (printPhase === 'client' && printChoice === 'both') {
         setPrintPhase('kitchen');
       } else {
         setPrintTicket(null);
         setPrintPhase(null);
+        setPrintChoice(null);
       }
     };
     window.addEventListener('afterprint', onAfterPrint, { once: true });
@@ -890,8 +1083,8 @@ export default function HomePage() {
     }
     setCartItems([]);
     setKitchenKey(k => k + 1);  // refrescar cocina (también para órdenes offline del outbox)
-    setPrintTicket(ticketData);
-    setPrintPhase('client');
+    // Pregunta al usuario antes de imprimir (ignora autoPrintTicketOnOrder — deuda técnica)
+    setPendingPrintTicket(ticketData);
   };
 
   const shiftTime = activeShift
@@ -926,6 +1119,18 @@ export default function HomePage() {
         <CloseShiftModal
           onClose={() => setShowCloseModal(false)}
           onConfirm={handleCloseShift}
+        />
+      )}
+      {pendingPrintTicket && (
+        <PrintConfirmModal
+          onClose={() => setPendingPrintTicket(null)}
+          onChoose={choice => {
+            const data = pendingPrintTicket;
+            setPendingPrintTicket(null);
+            setPrintChoice(choice);
+            setPrintTicket(data);
+            setPrintPhase(choice === 'kitchen' ? 'kitchen' : 'client');
+          }}
         />
       )}
 

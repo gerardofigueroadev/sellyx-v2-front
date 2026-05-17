@@ -5,7 +5,17 @@ interface PendingComplete {
   serverId?: number;
   localId?: string;
   completedAt: string;
+  // True una vez el backend confirmó el cambio de status. Mientras esté en
+  // false (o ausente), el sync service seguirá reintentando el PATCH.
+  // Confirmado o no, la entrada vive en el queue hasta que pase el TTL para
+  // que el filtro de UI la mantenga oculta durante la ventana de gracia.
+  confirmed?: boolean;
 }
+
+// Debe coincidir con COMPLETE_TTL_MS en HomePage.tsx — ventana de gracia
+// para que load() siga filtrando el ID aunque el backend tarde en reflejar
+// el cambio de status. Solo después del TTL se purga del queue.
+const COMPLETE_TTL_MS = 60_000;
 
 export type SyncStatus = 'online' | 'offline' | 'syncing';
 
@@ -87,8 +97,32 @@ export async function syncPendingCompletes(
   const token = await getToken();
   if (!token) return;
 
+  const now = Date.now();
   const remaining: PendingComplete[] = [];
+  let purged = 0;
+  let confirmedThisCycle = 0;
+  let reintented = 0;
+  let waitingServerId = 0;
+
   for (const item of queue) {
+    const age = now - new Date(item.completedAt).getTime();
+
+    // Entradas más viejas que el TTL ya no se filtran en getCompletedLocally;
+    // purgarlas del storage para no acumular basura indefinida.
+    if (age > COMPLETE_TTL_MS) {
+      console.warn('[KITCHEN] sync: purge by TTL', {
+        serverId: item.serverId,
+        localId: item.localId,
+        confirmed: !!item.confirmed,
+        ageSeconds: Math.round(age / 1000),
+      });
+      purged++;
+      continue;
+    }
+
+    // Ya confirmado en un ciclo anterior — solo mantener en queue hasta el TTL.
+    if (item.confirmed) { remaining.push(item); continue; }
+
     let serverId = item.serverId;
 
     // Si solo hay localId, buscar su serverId en el outbox (debe estar ya sincronizado)
@@ -100,7 +134,15 @@ export async function syncPendingCompletes(
     }
 
     // Sin serverId todavía → la orden aún no se sincronizó, esperar siguiente ciclo
-    if (!serverId) { remaining.push(item); continue; }
+    if (!serverId) {
+      console.warn('[KITCHEN] sync: waiting for serverId mapping', {
+        localId: item.localId,
+        ageSeconds: Math.round(age / 1000),
+      });
+      waitingServerId++;
+      remaining.push(item);
+      continue;
+    }
 
     try {
       const res = await fetch(`${apiBase}/orders/${serverId}/complete`, {
@@ -108,13 +150,56 @@ export async function syncPendingCompletes(
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(15_000),
       });
-      // 404/409 = orden no existe o ya completada → drop
-      if (!res.ok && res.status !== 404 && res.status !== 409) {
-        remaining.push(item);
+
+      // Verificar que el backend confirmó el cambio de status antes de
+      // considerar la entrada como sincronizada. 404/409 = ya no aplica.
+      let confirmed = res.status === 404 || res.status === 409;
+      let bodyStatus: string | undefined;
+      if (res.ok) {
+        try {
+          const body = await res.json();
+          bodyStatus = body?.status;
+          confirmed = body?.status === 'completed';
+        } catch {
+          confirmed = true; // respuesta sin body parseable — confiar en el 200
+        }
       }
-    } catch {
+
+      console.warn('[KITCHEN] sync: PATCH attempt', {
+        serverId,
+        localId: item.localId,
+        httpStatus: res.status,
+        bodyStatus,
+        confirmed,
+        ageSeconds: Math.round(age / 1000),
+      });
+
+      // Mantenemos la entrada hasta que pase el TTL para que el filtro de UI
+      // siga ocultándola. Si se confirmó, marcarla para no reintentar el PATCH.
+      if (confirmed) confirmedThisCycle++;
+      else reintented++;
+      remaining.push(confirmed ? { ...item, confirmed: true } : item);
+    } catch (e) {
+      console.warn('[KITCHEN] sync: PATCH error (will retry)', {
+        serverId,
+        localId: item.localId,
+        error: String(e),
+        ageSeconds: Math.round(age / 1000),
+      });
+      reintented++;
       remaining.push(item);
     }
+  }
+
+  if (purged + confirmedThisCycle + reintented + waitingServerId > 0) {
+    console.warn('[KITCHEN] sync: cycle summary', {
+      queueSize: queue.length,
+      purged,
+      confirmedThisCycle,
+      reintented,
+      waitingServerId,
+      remaining: remaining.length,
+    });
   }
 
   if (remaining.length === 0) localStorage.removeItem('pos_pending_completes');
