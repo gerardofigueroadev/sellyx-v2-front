@@ -25,13 +25,14 @@ interface CartProps {
   items: CartItem[];
   onRemove: (id: number) => void;
   onClear: () => void;
-  onCheckout: (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null, customerPhone: string | null) => void;
+  onCheckout: (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null, customerPhone: string | null) => void | Promise<void>;
   onNoteChange?: (id: number, note: string) => void;
   allowItemNotes?: boolean;
   showCustomerLookup?: boolean;
 }
 
 export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes, showCustomerLookup }: CartProps) {
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
   const { currency, enabledPaymentMethods, token } = useAuth();
   const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
   const [orderType, setOrderType] = useState<OrderType>('dine_in');
@@ -61,8 +62,21 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
     if (items.length === 0) {
       setPhone('');
       setFoundCustomer(null);
+      setIsCheckingOut(false);
     }
   }, [items.length]);
+
+  const handleCheckoutClick = async () => {
+    if (isCheckingOut || items.length === 0) return;
+    setIsCheckingOut(true);
+    try {
+      await onCheckout(activeMethod, orderType, foundCustomer?.id ?? null, phone || null);
+    } finally {
+      // Si el carrito se vació, el useEffect resetea isCheckingOut.
+      // Si no (error), liberamos el botón para reintentar.
+      setIsCheckingOut(false);
+    }
+  };
 
   // Debounced phone search
   useEffect(() => {
@@ -268,11 +282,16 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
 
         {/* Cobrar */}
         <button
-          disabled={items.length === 0}
-          onClick={() => onCheckout(activeMethod, orderType, foundCustomer?.id ?? null, phone || null)}
-          className="w-full bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition shadow-lg hover:shadow-green-500/20"
+          disabled={items.length === 0 || isCheckingOut}
+          onClick={handleCheckoutClick}
+          className="w-full bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition shadow-lg hover:shadow-green-500/20 flex items-center justify-center gap-2"
         >
-          {visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar'}
+          {isCheckingOut && (
+            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+          )}
+          {isCheckingOut
+            ? 'Procesando...'
+            : (visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar')}
         </button>
       </div>
 

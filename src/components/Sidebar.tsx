@@ -239,6 +239,12 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
         </button>
 
         {popoverOpen && <UserPopover onClose={() => setPopoverOpen(false)} />}
+        <p
+          className="text-slate-600 text-[10px] text-center mt-1.5 select-text"
+          title={`Sellyx POS v${__APP_VERSION__}`}
+        >
+          v{__APP_VERSION__}
+        </p>
       </div>
     </aside>
   );

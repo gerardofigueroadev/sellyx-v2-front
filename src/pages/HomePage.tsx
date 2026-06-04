@@ -6,8 +6,8 @@ import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
-import { saveOrderToOutbox, markOrderSynced, getPendingOrders } from '../lib/db';
-import { startSyncService, stopSyncService } from '../lib/syncService';
+import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally } from '../lib/db';
+import { startSyncService, stopSyncService, requestImmediateSync } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
 
@@ -43,32 +43,6 @@ interface KitchenOrder {
   items: { id?: number; quantity: number; product: { name: string; emoji: string }; notes?: string }[];
 }
 
-interface PendingComplete {
-  serverId?: number;
-  localId?: string;
-  completedAt: string;
-}
-
-// Ventana de gracia tras un complete exitoso: aunque el queue se "purgue",
-// mantenemos los IDs filtrados localmente este tiempo para absorber el lag
-// del backend (Railway) que puede devolver la orden como pending un rato más.
-const COMPLETE_TTL_MS = 60_000;
-
-// IDs marcados como completados en este momento (sync en vuelo) — defensa en
-// profundidad para que load() no los repinte aunque el cache/servidor los traiga.
-const inFlightCompletes: { serverIds: Set<number>; localIds: Set<string> } = {
-  serverIds: new Set(),
-  localIds: new Set(),
-};
-
-// Diagnóstico: IDs que pasaron por complete() en esta sesión. NO se usan para
-// filtrar (eso lo hace inFlightCompletes + TTL del queue) — solo para detectar
-// reaparición y loggearla cuando el filtro real ya expiró.
-const everCompletedThisSession: { serverIds: Map<number, string>; localIds: Map<string, string> } = {
-  serverIds: new Map(),
-  localIds: new Map(),
-};
-
 function elapsed(dateStr: string) {
   const m = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
   if (m < 1) return '< 1 min';
@@ -82,265 +56,96 @@ function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false, products = [] }: {
+function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertical = false, products = [], shiftOpenedAt }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
   warningMins: number; dangerMins: number; vertical?: boolean;
   products?: ApiProduct[];
+  shiftOpenedAt?: string | null;
 }) {
   const tauri = isTauri();
-  const cacheKey = `pos_kitchen_pending${branchId ? `_${branchId}` : ''}`;
 
-  // IDs marcados como completados localmente — se filtran de la lista.
-  // Incluye:
-  //  1) Pending completes en queue (aún sin sincronizar al backend).
-  //  2) Recent completes: entradas con completedAt dentro del TTL aunque el
-  //     PATCH ya respondió 200 (ventana de gracia para lag del backend).
-  //  3) In-flight completes en memoria (PATCH disparado, sin respuesta aún).
-  const getCompletedLocally = (): { serverIds: Set<number>; localIds: Set<string> } => {
-    const serverIds = new Set<number>(inFlightCompletes.serverIds);
-    const localIds = new Set<string>(inFlightCompletes.localIds);
-    try {
-      const queue: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
-      const now = Date.now();
-      queue.forEach(q => {
-        // Filtra entradas más viejas que el TTL (se consideran limpias)
-        const age = now - new Date(q.completedAt).getTime();
-        if (age > COMPLETE_TTL_MS) return;
-        if (q.serverId) serverIds.add(q.serverId);
-        if (q.localId) localIds.add(q.localId);
-      });
-    } catch { /* devolvemos lo que haya del in-flight set */ }
-    return { serverIds, localIds };
-  };
-
-  const [orders, setOrders] = useState<KitchenOrder[]>(() => {
-    try {
-      const cached: KitchenOrder[] = JSON.parse(localStorage.getItem(cacheKey) ?? '[]');
-      const { serverIds } = getCompletedLocally();
-      return cached.filter(o => !serverIds.has(o.id));
-    } catch { return []; }
-  });
+  const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [completing, setCompleting] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
 
+  // Cola local-first: lee del SQLite outbox, que es la fuente de verdad de cocina.
+  // No depende del servidor — el cajero ve la cola al instante incluso con red mala.
+  // Acotada al turno actual: si no hay turno, fallback a últimas 24h (defensa contra
+  // mostrar tickets viejos cuando se cierra y reabre la caja).
   const load = useCallback(async () => {
-    const { serverIds, localIds } = getCompletedLocally();
-    const qs = branchId ? `?branchId=${branchId}` : '';
-    const loadStart = Date.now();
-
-    // 1) Pedidos del servidor (con cache offline)
-    let serverPending: KitchenOrder[] = [];
-    let source: 'server' | 'cache-after-error' | 'cache-after-throw' = 'server';
+    if (!tauri) { setOrders([]); return; }
     try {
-      const res = await apiFetch(token, `/orders${qs}`);
-      if (res.ok) {
-        const all = await res.json();
-        serverPending = all.filter((o: any) => o.status === 'pending');
-        localStorage.setItem(cacheKey, JSON.stringify(serverPending));
-      } else {
-        source = 'cache-after-error';
-        try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
-      }
-    } catch {
-      source = 'cache-after-throw';
-      try { serverPending = JSON.parse(localStorage.getItem(cacheKey) ?? '[]'); } catch {}
-    }
-
-    // Detectar IDs que el servidor/cache trajo PERO están en el filtro local
-    // (señal de reaparición — el backend aún no refleja el complete, o falló)
-    const blocked = serverPending.filter(o => serverIds.has(o.id));
-    if (blocked.length > 0) {
-      console.warn('[KITCHEN] load: blocked by local filter', {
-        source,
-        count: blocked.length,
-        ids: blocked.map(o => ({ id: o.id, ticket: o.ticketNumber })),
-        filterServerIds: Array.from(serverIds),
-        filterLocalIds: Array.from(localIds),
-        elapsedMs: Date.now() - loadStart,
-      });
-    }
-    serverPending = serverPending.filter(o => !serverIds.has(o.id));
-
-    // Reaparición real: ticket que ya pasó el filtro (TTL caducó) pero fue
-    // completado en esta sesión. Si esto ocurre el backend nunca persistió
-    // el cambio de status — el bug reportado por el cliente.
-    const reappeared = serverPending.filter(o => everCompletedThisSession.serverIds.has(o.id));
-    if (reappeared.length > 0) {
-      console.warn('[KITCHEN] load: REAPPEARED after TTL (backend nunca cambió status)', {
-        source,
-        count: reappeared.length,
-        tickets: reappeared.map(o => ({
-          id: o.id,
-          ticket: o.ticketNumber,
-          completedAt: everCompletedThisSession.serverIds.get(o.id),
-          minutesAgo: Math.round((Date.now() - new Date(everCompletedThisSession.serverIds.get(o.id)!).getTime()) / 60000),
-        })),
-      });
-    }
-
-    // 2) Pedidos locales del outbox (Tauri only)
-    let offlinePending: KitchenOrder[] = [];
-    if (tauri) {
-      try {
-        const outbox = await getPendingOrders();
-        // Filtrar los que tienen branchId distinto al filtro actual
-        offlinePending = outbox
-          .filter(o => !localIds.has(o.local_id))
-          .map(o => {
-            let payload: any = {};
-            try { payload = JSON.parse(o.payload); } catch {}
+      const fallback24h = Date.now() - 24 * 60 * 60 * 1000;
+      const sinceTs = shiftOpenedAt
+        ? new Date(shiftOpenedAt).getTime()
+        : fallback24h;
+      const rows = await getPendingKitchenOrders(sinceTs);
+      const mapped: KitchenOrder[] = rows.map(o => {
+        let payload: any = {};
+        try { payload = JSON.parse(o.payload); } catch {}
+        const isUnsynced = o.synced === 0;
+        return {
+          id: o.server_id ?? 0,
+          localId: o.local_id,
+          isLocal: isUnsynced,
+          orderNumber: o.local_id.slice(0, 8).toUpperCase(),
+          ticketNumber: o.local_id.slice(0, 4).toUpperCase(),
+          createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
+          items: (payload.items ?? []).map((it: any) => {
+            const product = products.find(p => p.id === it.productId);
             return {
-              id: 0,
-              localId: o.local_id,
-              isLocal: true,
-              orderNumber: o.local_id.slice(0, 8).toUpperCase(),
-              ticketNumber: o.local_id.slice(0, 4).toUpperCase(),
-              createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
-              items: (payload.items ?? []).map((it: any) => {
-                const product = products.find(p => p.id === it.productId);
-                return {
-                  id: it.productId,
-                  quantity: it.quantity,
-                  product: {
-                    name: it.productName ?? product?.name ?? '?',
-                    emoji: product?.emoji ?? '🍽️',
-                  },
-                  notes: it.notes,
-                };
-              }),
-            } as KitchenOrder;
-          });
-      } catch { /* ignore */ }
-    }
-
-    // Reaparición de orden local: completada en sesión pero el outbox aún la trae
-    const localReappeared = offlinePending.filter(o => o.localId && everCompletedThisSession.localIds.has(o.localId));
-    if (localReappeared.length > 0) {
-      console.warn('[KITCHEN] load: LOCAL order reappeared (outbox sin completar a backend)', {
-        count: localReappeared.length,
-        tickets: localReappeared.map(o => ({
-          localId: o.localId,
-          ticket: o.ticketNumber,
-          completedAt: everCompletedThisSession.localIds.get(o.localId!),
-          minutesAgo: Math.round((Date.now() - new Date(everCompletedThisSession.localIds.get(o.localId!)!).getTime()) / 60000),
-        })),
+              id: it.productId,
+              quantity: it.quantity,
+              product: {
+                name: it.productName ?? product?.name ?? '?',
+                emoji: product?.emoji ?? '🍽️',
+              },
+              notes: it.notes,
+            };
+          }),
+        };
       });
+      setOrders(mapped);
+    } catch (e) {
+      console.warn('[KITCHEN] load: SQLite read failed', String(e));
     }
-
-    setOrders([...offlinePending, ...serverPending]);
-  }, [token, branchId, cacheKey, tauri, products]);
+  }, [tauri, products, shiftOpenedAt]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  // Re-render cada minuto para actualizar los timers sin llamar a la API
+  // Re-render cada minuto para actualizar los timers sin tocar nada más
   useEffect(() => {
     const t = setInterval(() => setTick(n => n + 1), 60000);
     return () => clearInterval(t);
   }, []);
 
-  const complete = (order: KitchenOrder) => {
-    const key = order.localId ?? `s${order.id}`;
+  // Complete local-first: actualiza SQLite (instantáneo) y dispara sync en background.
+  // No espera red — la UI refleja el cambio al toque y JAMÁS reaparece la orden
+  // porque la cocina se nutre del estado local, no del servidor.
+  const complete = async (order: KitchenOrder) => {
+    if (!order.localId) {
+      console.warn('[KITCHEN] complete: orden sin localId — no se puede completar localmente', order);
+      return;
+    }
+    const key = order.localId;
     setCompleting(key);
 
-    console.warn('[KITCHEN] complete: intent', {
-      ticketNumber: order.ticketNumber,
-      isLocal: !!order.isLocal,
-      serverId: order.id,
-      localId: order.localId,
-      online: navigator.onLine,
-      at: new Date().toISOString(),
-    });
-
-    // Marcar como in-flight para que load() lo excluya aunque el cache lo traiga
-    if (order.isLocal && order.localId) inFlightCompletes.localIds.add(order.localId);
-    else if (order.id > 0) inFlightCompletes.serverIds.add(order.id);
-
-    // Registrar en el "alguna vez completado" para diagnosticar reaparición
-    const nowIso = new Date().toISOString();
-    if (order.localId) everCompletedThisSession.localIds.set(order.localId, nowIso);
-    if (order.id > 0) everCompletedThisSession.serverIds.set(order.id, nowIso);
-
-    // Update optimista: remover de UI y del cache
-    setOrders(prev => {
-      const next = prev.filter(o => (o.localId ?? `s${o.id}`) !== key);
-      const cacheable = next.filter(o => !o.isLocal);
-      localStorage.setItem(cacheKey, JSON.stringify(cacheable));
-      return next;
-    });
-    onComplete();
-
-    // Encolar para sync (siempre — el servicio de sync lo procesará).
-    // La entrada NO se borra al 200: se purga por TTL en getCompletedLocally,
-    // dando una ventana de gracia para que el backend refleje el cambio.
-    const completedAt = new Date().toISOString();
-    const enqueue = () => {
-      const queueRaw = localStorage.getItem('pos_pending_completes');
-      const queue: PendingComplete[] = queueRaw ? JSON.parse(queueRaw) : [];
-      queue.push({
-        ...(order.isLocal ? { localId: order.localId! } : { serverId: order.id }),
-        completedAt,
-      });
-      localStorage.setItem('pos_pending_completes', JSON.stringify(queue));
-    };
-    enqueue();
-
-    // Si está online y es pedido del servidor, intentar sync inmediato
-    if (navigator.onLine && !order.isLocal && order.id > 0) {
-      apiFetch(token, `/orders/${order.id}/complete`, { method: 'PATCH' })
-        .then(async res => {
-          // Verificar que el backend realmente cambió el status antes de
-          // considerar la sincronización confirmada. 404/409 = ya no aplica.
-          let confirmed = res.status === 404 || res.status === 409;
-          let bodyStatus: string | undefined;
-          if (res.ok) {
-            try {
-              const body = await res.json();
-              bodyStatus = body?.status;
-              confirmed = body?.status === 'completed';
-            } catch { /* respuesta sin body — confiar en el 200 */
-              confirmed = true;
-            }
-          }
-          console.warn('[KITCHEN] complete: PATCH response', {
-            serverId: order.id,
-            httpStatus: res.status,
-            bodyStatus,
-            confirmed,
-          });
-          if (confirmed) {
-            // Liberar el in-flight; marcar la entrada del queue como confirmada
-            // para que el sync service no reintente el PATCH. El filtro por TTL
-            // del queue mantiene la ventana de gracia los siguientes 60s.
-            inFlightCompletes.serverIds.delete(order.id);
-            try {
-              const cur: PendingComplete[] = JSON.parse(localStorage.getItem('pos_pending_completes') ?? '[]');
-              const updated = cur.map(q =>
-                q.serverId === order.id && q.completedAt === completedAt
-                  ? { ...q, confirmed: true }
-                  : q
-              );
-              localStorage.setItem('pos_pending_completes', JSON.stringify(updated));
-            } catch { /* ignore — el sync service hará el flag en su próximo ciclo */ }
-          }
-          // Si no se confirmó, mantener in-flight y queue — el sync service reintenta.
-        })
-        .catch(e => {
-          console.warn('[KITCHEN] complete: PATCH error', {
-            serverId: order.id,
-            error: String(e),
-          });
-          /* mantener in-flight + queue para próximo intento */
-        });
-    } else {
-      console.warn('[KITCHEN] complete: PATCH skipped (offline/local/no-id)', {
-        online: navigator.onLine,
-        isLocal: !!order.isLocal,
-        serverId: order.id,
-      });
+    try {
+      // 1) Persistir en SQLite — fuente de verdad local
+      await markKitchenCompletedLocally(order.localId);
+      // 2) Quitar de UI optimistamente
+      setOrders(prev => prev.filter(o => o.localId !== key));
+      onComplete();
+      // 3) Disparar sync en background — sin esperar
+      requestImmediateSync();
+    } catch (e) {
+      console.warn('[KITCHEN] complete: SQLite write failed', String(e));
+      // Si falla SQLite (raro), recargamos para no dejar la UI inconsistente
+      load();
+    } finally {
+      setCompleting(null);
     }
-
-    setCompleting(null);
   };
 
   const containerClass = vertical
@@ -654,6 +459,7 @@ export default function HomePage() {
   const { token, user, hasPermission, activeBranchId, currency, getValidToken } = useAuth();
   const toast = useToast();
   const tauri = isTauri();
+  const orgName = (user as any)?.organization?.name ?? 'Mi Negocio';
   const { isOnline, pendingCount, syncing } = useSync();
   const [forceOffline] = useState(() => localStorage.getItem('pos_force_offline') === 'true');
   const isEffectivelyOffline = forceOffline || !isOnline;
@@ -670,6 +476,10 @@ export default function HomePage() {
     return !localStorage.getItem('products_cache');
   });
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  // Idempotency key estable mientras el carrito tenga items. Se regenera al
+  // vaciarlo (tras un checkout). Si el cajero hace doble-click, ambos POST
+  // llevan el mismo localId y el backend deduplica via orders.service.ts.
+  const [cartLocalId, setCartLocalId] = useState(() => crypto.randomUUID());
   const [kitchenKey, setKitchenKey] = useState(0);
 
   const isAdmin = hasPermission('orders:view_all');
@@ -853,6 +663,45 @@ export default function HomePage() {
     return () => stopSyncService();
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Limpieza de claves legacy del modelo viejo (TTL + inflight + cache servidor).
+  // ANTES de borrar pos_pending_completes, intentamos drenarlo al backend:
+  // si el cliente actualiza de 1.0.2 → 1.0.4 con completes pendientes de
+  // sincronizar, esos PATCHes nunca llegaron. Si los borramos sin enviar,
+  // esas órdenes quedan "pending" para siempre en el dashboard cloud y los
+  // reportes subreportan revenue. Drenar es best-effort: si falla, igual borra
+  // (estado anterior tampoco las habría enviado, así que no perdemos nada nuevo).
+  useEffect(() => {
+    let cancelled = false;
+    const drainLegacyCompletes = async () => {
+      try {
+        const raw = localStorage.getItem('pos_pending_completes');
+        if (raw && token && navigator.onLine) {
+          const queue = JSON.parse(raw) as Array<{ serverId?: number; localId?: string }>;
+          const serverIds = queue
+            .map(q => q.serverId)
+            .filter((id): id is number => typeof id === 'number' && id > 0);
+          // PATCHes best-effort, en paralelo, con timeout corto para no bloquear el arranque.
+          await Promise.all(serverIds.map(id =>
+            apiFetch(token, `/orders/${id}/complete`, {
+              method: 'PATCH',
+              signal: AbortSignal.timeout(10_000),
+            }).catch(() => {})
+          ));
+        }
+      } catch { /* ignore */ }
+      if (cancelled) return;
+      try {
+        localStorage.removeItem('pos_pending_completes');
+        localStorage.removeItem('pos_kitchen_inflight_completes');
+        Object.keys(localStorage)
+          .filter(k => k.startsWith('pos_kitchen_pending'))
+          .forEach(k => localStorage.removeItem(k));
+      } catch { /* ignore */ }
+    };
+    drainLegacyCompletes();
+    return () => { cancelled = true; };
+  }, [token]);
+
   const handleOpenShift = async (amount: number, notes: string) => {
     setShiftLoading(true);
 
@@ -975,30 +824,22 @@ export default function HomePage() {
       return;
     }
 
-    const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
-    const localId = crypto.randomUUID();
+    // Idempotencia: usar el localId estable del carrito. Si el cajero hace
+    // doble-click ANTES de que el botón se deshabilite, ambos POST llevan el
+    // mismo localId y orders.service.ts lo deduplica.
+    const localId = cartLocalId;
+    const itemsSnapshot = cartItems;
+    const total = itemsSnapshot.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
     const clientCreatedAt = new Date().toISOString();
 
-    // Intentar crear cliente solo cuando hay conexión
-    let resolvedCustomerId = customerId;
-    if (!resolvedCustomerId && customerPhone && !isEffectivelyOffline) {
-      try {
-        const customerRes = await apiFetch(token, '/customers', {
-          method: 'POST',
-          body: JSON.stringify({ phone: customerPhone }),
-        });
-        if (customerRes.ok) resolvedCustomerId = (await customerRes.json()).id;
-      } catch { /* offline, skip */ }
-    }
-
-    const payload = {
+    const buildPayload = (resolvedCustomerId: number | null) => ({
       localId,
       clientCreatedAt,
       shiftId: activeShift.id,
       channel: 'pos',
       paymentMethod,
       orderType,
-      items: cartItems.map(i => ({
+      items: itemsSnapshot.map(i => ({
         productId:   i.id,
         quantity:    i.quantity,
         unitPrice:   Number(i.price),
@@ -1007,91 +848,113 @@ export default function HomePage() {
       })),
       ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
       ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}),
+    });
+
+    // ── Local-first: persistir en outbox + cerrar UI inmediatamente ─────────
+    // El POST a /orders se hace en background — el cliente no espera el
+    // roundtrip a Railway, que puede tomar varios segundos.
+    if (tauri) {
+      // Persistencia durable. Si el cajero da doble-click, INSERT OR IGNORE
+      // garantiza que solo entra una vez (PK = localId).
+      // Si SQLite falla (disco lleno, lock, permisos), advertimos al cajero
+      // para que conserve el ticket impreso — la venta podría no estar respaldada.
+      await saveOrderToOutbox(localId, buildPayload(customerId)).catch(e => {
+        console.error('[CHECKOUT] saveOrderToOutbox failed', e);
+        toast.warning('Aviso: venta no respaldada localmente — conserve el ticket impreso');
+      });
+    }
+
+    // Ticket optimista: número provisional hasta que el server responda.
+    // Si ya estamos online, el ticket real lo verá en /orders cuando el sync
+    // termine; si offline, este es el ticket definitivo del print.
+    const provisionalTicketNum = parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1;
+    localStorage.setItem('last_offline_ticket', String(provisionalTicketNum));
+
+    const ticketData: OrderTicketData = {
+      ticketNumber:  provisionalTicketNum,
+      orderNumber:   `LOCAL-${localId.slice(0, 8).toUpperCase()}`,
+      paymentMethod,
+      items: itemsSnapshot.map(i => ({
+        name:      i.name,
+        quantity:  i.quantity,
+        unitPrice: Number(i.price),
+        subtotal:  Number(i.price) * i.quantity,
+        notes:     i.note,
+      })),
+      total,
+      branchName:  (user as any)?.branch?.name ?? '',
+      orgName,
+      cashierName: (user as any)?.name,
+      createdAt:   clientCreatedAt,
+      currency,
+      orderType,
     };
 
-    // Guardar en outbox PRIMERO — garantía de que no se pierde aunque se corte la conexión
-    if (tauri) {
-      await saveOrderToOutbox(localId, payload).catch(() => {});
-    }
-
-    let serverOrder: any = null;
-    try {
-      const res = await apiFetch(token, '/orders', { method: 'POST', body: JSON.stringify(payload) });
-      if (res.ok) {
-        serverOrder = await res.json();
-        if (tauri) await markOrderSynced(localId, serverOrder.id).catch(() => {});
-      } else {
-        const d = await res.json().catch(() => ({}));
-        if (!tauri) {
-          toast.error(d.message ?? 'Error al registrar venta');
-          return;
-        }
-      }
-    } catch { /* error de red — la orden queda en outbox para sync posterior */ }
-
-    // Construir ticket con datos del servidor o con datos locales (modo offline)
-    const ticketData: OrderTicketData = serverOrder
-      ? {
-          ticketNumber:  serverOrder.ticketNumber,
-          orderNumber:   serverOrder.orderNumber,
-          paymentMethod,
-          items: (serverOrder.items ?? []).map((item: any) => ({
-            name:      item.product?.name ?? item.productName ?? '—',
-            quantity:  item.quantity,
-            unitPrice: parseFloat(item.unitPrice),
-            subtotal:  parseFloat(item.subtotal),
-            notes:     item.notes ?? undefined,
-          })),
-          total:       parseFloat(serverOrder.total),
-          notes:       serverOrder.notes ?? undefined,
-          branchName:  serverOrder.branch?.name ?? (user as any)?.branch?.name ?? '',
-          orgName,
-          cashierName: (user as any)?.name,
-          createdAt:   serverOrder.createdAt ?? clientCreatedAt,
-          currency,
-          orderType:   serverOrder.orderType ?? orderType,
-        }
-      : {
-          // Ticket local cuando offline
-          ticketNumber:  parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1,
-          orderNumber:   `LOCAL-${localId.slice(0, 8).toUpperCase()}`,
-          paymentMethod,
-          items: cartItems.map(i => ({
-            name:      i.name,
-            quantity:  i.quantity,
-            unitPrice: Number(i.price),
-            subtotal:  Number(i.price) * i.quantity,
-          })),
-          total,
-          branchName:  (user as any)?.branch?.name ?? '',
-          orgName,
-          cashierName: (user as any)?.name,
-          createdAt:   clientCreatedAt,
-          currency,
-          orderType,
-        };
-
-    if (!serverOrder) {
-      const nextTicket = parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1;
-      localStorage.setItem('last_offline_ticket', String(nextTicket));
-    }
-
-    if (serverOrder) {
-      toast.success(`Venta registrada — ${currency} ${total.toFixed(2)}`);
-    } else {
-      toast.warning(`Sin conexión — venta guardada localmente (${currency} ${total.toFixed(2)})`);
-    }
+    // UI optimista: vaciar carrito, regenerar localId, refrescar cocina, mostrar print
     setCartItems([]);
-    setKitchenKey(k => k + 1);  // refrescar cocina (también para órdenes offline del outbox)
-    // Pregunta al usuario antes de imprimir (ignora autoPrintTicketOnOrder — deuda técnica)
+    setCartLocalId(crypto.randomUUID());
+    setKitchenKey(k => k + 1);
     setPendingPrintTicket(ticketData);
+    toast.success(`Venta registrada — ${currency} ${total.toFixed(2)}`);
+
+    // ── Sincronización en background ────────────────────────────────────────
+    // Customer creation: no bloquea, se resuelve antes del POST de la orden si
+    // alcanza, sino la orden se sincroniza sin customerId y el cliente se asocia
+    // a futuras visitas.
+    const syncInBackground = async () => {
+      let resolvedCustomerId = customerId;
+      if (!resolvedCustomerId && customerPhone && navigator.onLine) {
+        try {
+          const customerRes = await apiFetch(token, '/customers', {
+            method: 'POST',
+            body: JSON.stringify({ phone: customerPhone }),
+          });
+          if (customerRes.ok) resolvedCustomerId = (await customerRes.json()).id;
+        } catch { /* offline o error, seguir sin customerId */ }
+      }
+
+      if (!navigator.onLine || isEffectivelyOffline) {
+        // Offline: ya está en outbox (tauri) o se perderá el background POST
+        // pero el syncService reintentará cuando vuelva la red.
+        if (tauri) requestImmediateSync();
+        return;
+      }
+
+      try {
+        const res = await apiFetch(token, '/orders', {
+          method: 'POST',
+          body: JSON.stringify(buildPayload(resolvedCustomerId)),
+        });
+        if (res.ok) {
+          const serverOrder = await res.json();
+          if (tauri) {
+            await markOrderSynced(localId, serverOrder.id).catch(() => {});
+            // Si el cajero ya marcó "Listo" entre el saveOrderToOutbox y este
+            // markOrderSynced, su complete está en SQLite con server_id=null
+            // y no podía sincronizarse. Ahora con server_id seteado, forzamos
+            // un ciclo de sync para que el PATCH /complete salga sin esperar 30s.
+            requestImmediateSync();
+          }
+        } else if (tauri) {
+          // El sync service reintentará en próximo ciclo (ya está en outbox).
+          requestImmediateSync();
+        } else {
+          // Web sin outbox: avisar al usuario que la orden no llegó al server.
+          const d = await res.json().catch(() => ({}));
+          toast.error(d.message ?? 'Error al sincronizar venta — reintenta');
+        }
+      } catch {
+        // Red cayó entre el click y el POST. Si tauri, syncService la levantará.
+        if (tauri) requestImmediateSync();
+        else toast.error('Sin conexión — venta no sincronizada');
+      }
+    };
+    syncInBackground();
   };
 
   const shiftTime = activeShift
     ? new Date(activeShift.openedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true })
     : null;
-
-  const orgName = (user as any)?.organization?.name ?? 'Mi Negocio';
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -1268,6 +1131,7 @@ export default function HomePage() {
               warningMins={Number(orgSettings.kitchenWarningMins ?? 5)}
               dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
               products={products}
+              shiftOpenedAt={activeShift?.openedAt ?? null}
             />
           )}
         </div>
@@ -1284,6 +1148,7 @@ export default function HomePage() {
               dangerMins={Number(orgSettings.kitchenDangerMins ?? 15)}
               vertical
               products={products}
+              shiftOpenedAt={activeShift?.openedAt ?? null}
             />
           </div>
         )}

@@ -148,7 +148,9 @@ function OrderDetailModal({
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
-          {order.items.map(item => (
+          {!order.items ? (
+            <p className="text-slate-500 text-sm text-center py-4">Cargando detalle…</p>
+          ) : order.items.map(item => (
             <div key={item.id} className="flex items-center gap-3 bg-slate-700/40 rounded-xl px-4 py-3">
               <span className="text-2xl shrink-0">{item.product.emoji || '🍽️'}</span>
               <div className="flex-1 min-w-0">
@@ -283,19 +285,26 @@ const PERIOD_LABELS: { key: Period; label: string }[] = [
   { key: 'year',  label: 'Año' },
 ];
 
-function inPeriod(dateStr: string, period: Period): boolean {
-  const d = new Date(dateStr);
+/** Convierte un periodo en rango [from, to] (YYYY-MM-DD) para enviar al backend. */
+function periodToRange(period: Period): { from: string; to: string } {
   const now = new Date();
-  if (period === 'day')   return d.toDateString() === now.toDateString();
-  if (period === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  if (period === 'year')  return d.getFullYear() === now.getFullYear();
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  if (period === 'day') return { from: fmt(now), to: fmt(now) };
+  if (period === 'month') {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: fmt(first), to: fmt(last) };
+  }
+  if (period === 'year') {
+    return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+  }
   // week: lunes a domingo de la semana actual
   const startOfWeek = new Date(now);
   startOfWeek.setHours(0, 0, 0, 0);
   startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
   const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 7);
-  return d >= startOfWeek && d < endOfWeek;
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  return { from: fmt(startOfWeek), to: fmt(endOfWeek) };
 }
 
 function PeriodFilter({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
@@ -331,29 +340,56 @@ export default function OrdersPage() {
   const [period, setPeriod] = useState<Period>('day');
   const [selected, setSelected] = useState<Order | null>(null);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 50;
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    const qs = activeBranchId ? `?branchId=${activeBranchId}` : '';
-    const res = await apiFetch(token, `/orders${qs}`);
-    if (res.ok) setOrders(await res.json());
+    const { from, to } = periodToRange(period);
+    const params = new URLSearchParams({ from, to, page: String(page), limit: String(PAGE_SIZE) });
+    if (activeBranchId) params.set('branchId', String(activeBranchId));
+    const res = await apiFetch(token, `/orders?${params.toString()}`);
+    if (res.ok) {
+      const json = await res.json();
+      // Soporta tanto la respuesta paginada {data,total,...} como un array plano (compat).
+      if (Array.isArray(json)) {
+        setOrders(json);
+        setTotalPages(1);
+        setTotal(json.length);
+      } else {
+        setOrders(json.data ?? []);
+        setTotalPages(json.totalPages ?? 1);
+        setTotal(json.total ?? 0);
+      }
+    }
     setLoading(false);
-  }, [token, activeBranchId]);
+  }, [token, activeBranchId, period, page]);
 
   useEffect(() => { load(); }, [load]);
 
+  // Al cambiar de periodo o sucursal, volver a la pagina 1.
+  useEffect(() => { setPage(1); }, [period, activeBranchId]);
+
   const handleUpdated = (updated: Order) => {
-    setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+    setOrders(prev => prev.map(o => o.id === updated.id ? { ...o, ...updated } : o));
     setSelected(updated);
   };
 
-  // Aplicar filtro de periodo primero, luego estado y búsqueda, ordenar por ticketNumber desc
-  const periodOrders = orders.filter(o => inPeriod(o.createdAt, period));
+  // El listado es plano (sin items). Al abrir una orden, pedimos su detalle
+  // completo (/orders/:id trae items y relaciones).
+  const openOrder = useCallback(async (order: Order) => {
+    setSelected(order); // muestra de inmediato lo que ya tenemos
+    if (!token) return;
+    const res = await apiFetch(token, `/orders/${order.id}`);
+    if (res.ok) setSelected(await res.json());
+  }, [token]);
 
-  // Branches únicas para el filtro de admin
-
-  const filtered = periodOrders
+  // El filtro de periodo ya lo aplica el backend (rango from/to). Aqui solo
+  // filtramos por estado, busqueda y sucursal sobre lo que llego.
+  const filtered = orders
     .filter(o => {
       const matchesFilter = filter === 'all' || o.status === filter;
       const matchesSearch = !search || o.orderNumber.toLowerCase().includes(search.toLowerCase());
@@ -362,15 +398,16 @@ export default function OrdersPage() {
     })
     .sort((a, b) => b.ticketNumber - a.ticketNumber);
 
+  // Conteos sobre lo que llego en esta pagina (el server ya filtro por periodo).
   const counts = {
-    all:       periodOrders.length,
-    pending:   periodOrders.filter(o => o.status === 'pending').length,
-    completed: periodOrders.filter(o => o.status === 'completed').length,
-    cancelled: periodOrders.filter(o => o.status === 'cancelled').length,
-    voided:    periodOrders.filter(o => o.status === 'voided').length,
+    all:       orders.length,
+    pending:   orders.filter(o => o.status === 'pending').length,
+    completed: orders.filter(o => o.status === 'completed').length,
+    cancelled: orders.filter(o => o.status === 'cancelled').length,
+    voided:    orders.filter(o => o.status === 'voided').length,
   };
 
-  const completedTotal = periodOrders
+  const completedTotal = orders
     .filter(o => o.status === 'completed')
     .reduce((s, o) => s + Number(o.total), 0);
 
@@ -400,7 +437,7 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-xl font-bold text-white">Pedidos</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            {loading ? 'Cargando...' : `${periodOrders.length} pedido(s) · ${currency} ${completedTotal.toFixed(2)} completados`}
+            {loading ? 'Cargando...' : `${total} pedido(s) · ${currency} ${completedTotal.toFixed(2)} completados (pág.)`}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap justify-end">
@@ -467,7 +504,7 @@ export default function OrdersPage() {
           filtered.map(order => (
             <div
               key={order.id}
-              onClick={() => setSelected(order)}
+              onClick={() => openOrder(order)}
               className={`px-5 py-4 border-b border-slate-700/30 grid gap-4 items-center hover:bg-slate-800/60 cursor-pointer transition-colors group ${
                 isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]'
               }`}
@@ -522,9 +559,11 @@ export default function OrdersPage() {
                 <p className="text-slate-600 text-xs">{timeAgo(order.createdAt)}</p>
               </div>
 
-              {/* Items */}
+              {/* Items (el conteo no viene en el listado plano; se ve al abrir) */}
               <div className="w-20 text-center">
-                <span className="text-slate-400 text-sm">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</span>
+                <span className="text-slate-400 text-sm">
+                  {order.items ? `${order.items.length} item${order.items.length !== 1 ? 's' : ''}` : '—'}
+                </span>
               </div>
 
               {/* Total */}
@@ -543,6 +582,31 @@ export default function OrdersPage() {
           ))
         )}
       </div>
+
+      {/* Paginacion */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/30">
+          <span className="text-slate-500 text-xs">
+            {total} pedido{total !== 1 ? 's' : ''} · página {page} de {totalPages}
+          </span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1 || loading}
+              className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 border border-slate-700/50 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-white transition"
+            >
+              ← Anterior
+            </button>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages || loading}
+              className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 border border-slate-700/50 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-white transition"
+            >
+              Siguiente →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

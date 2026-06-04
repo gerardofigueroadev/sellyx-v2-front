@@ -1,21 +1,8 @@
-import { getPendingOrders, markOrderSynced, incrementRetry, getPendingCount, getServerIdForLocalId } from './db';
+import {
+  getPendingOrders, markOrderSynced, incrementRetry, getPendingCount,
+  getKitchenCompletedToSync, markKitchenCompleteSynced,
+} from './db';
 import { isTauri } from './isTauri';
-
-interface PendingComplete {
-  serverId?: number;
-  localId?: string;
-  completedAt: string;
-  // True una vez el backend confirmó el cambio de status. Mientras esté en
-  // false (o ausente), el sync service seguirá reintentando el PATCH.
-  // Confirmado o no, la entrada vive en el queue hasta que pase el TTL para
-  // que el filtro de UI la mantenga oculta durante la ventana de gracia.
-  confirmed?: boolean;
-}
-
-// Debe coincidir con COMPLETE_TTL_MS en HomePage.tsx — ventana de gracia
-// para que load() siga filtrando el ID aunque el backend tarde en reflejar
-// el cambio de status. Solo después del TTL se purga del queue.
-const COMPLETE_TTL_MS = 60_000;
 
 export type SyncStatus = 'online' | 'offline' | 'syncing';
 
@@ -33,6 +20,12 @@ function emit(status: SyncStatus, pending: number) {
 
 let isSyncing = false;
 let syncInterval: ReturnType<typeof setInterval> | null = null;
+let trySyncNow: (() => Promise<void>) | null = null;
+
+/** Dispara un ciclo de sync inmediato si el servicio está corriendo. No-op si no. */
+export function requestImmediateSync(): void {
+  if (trySyncNow) { trySyncNow().catch(() => {}); }
+}
 
 export async function syncPendingOrders(
   getToken: () => Promise<string | null>,
@@ -65,10 +58,9 @@ export async function syncPendingOrders(
 
       if (res.ok) {
         const saved = await res.json();
+        // Idempotencia: el backend devuelve la orden existente (200) en lugar
+        // de 409, así que `saved.id` siempre es el server_id real.
         await markOrderSynced(order.local_id, saved.id);
-      } else if (res.status === 409) {
-        // El servidor ya tiene esta orden (idempotencia) — marcarla como sincronizada
-        await markOrderSynced(order.local_id, -1);
       } else {
         await incrementRetry(order.local_id, `HTTP ${res.status}`);
       }
@@ -82,128 +74,60 @@ export async function syncPendingOrders(
   emit(navigator.onLine ? 'online' : 'offline', remaining);
 }
 
+/**
+ * Sincroniza al backend los "complete" de cocina marcados localmente.
+ * Fuente de verdad: SQLite outbox (kitchen_status='completed', kitchen_synced=0).
+ * La UI nunca depende de esto — solo sirve para reflejar el cambio en la nube.
+ */
 export async function syncPendingCompletes(
   getToken: () => Promise<string | null>,
   apiBase: string,
-  isTauri: boolean,
+  isTauriEnv: boolean,
 ): Promise<void> {
-  if (!navigator.onLine) return;
-  const raw = localStorage.getItem('pos_pending_completes');
-  if (!raw) return;
-  let queue: PendingComplete[];
-  try { queue = JSON.parse(raw); } catch { localStorage.removeItem('pos_pending_completes'); return; }
-  if (queue.length === 0) { localStorage.removeItem('pos_pending_completes'); return; }
+  if (!navigator.onLine || !isTauriEnv) return;
+
+  let pending: Awaited<ReturnType<typeof getKitchenCompletedToSync>> = [];
+  try { pending = await getKitchenCompletedToSync(); } catch { return; }
+  if (pending.length === 0) return;
 
   const token = await getToken();
   if (!token) return;
 
-  const now = Date.now();
-  const remaining: PendingComplete[] = [];
-  let purged = 0;
   let confirmedThisCycle = 0;
   let reintented = 0;
-  let waitingServerId = 0;
 
-  for (const item of queue) {
-    const age = now - new Date(item.completedAt).getTime();
-
-    // Entradas más viejas que el TTL ya no se filtran en getCompletedLocally;
-    // purgarlas del storage para no acumular basura indefinida.
-    if (age > COMPLETE_TTL_MS) {
-      console.warn('[KITCHEN] sync: purge by TTL', {
-        serverId: item.serverId,
-        localId: item.localId,
-        confirmed: !!item.confirmed,
-        ageSeconds: Math.round(age / 1000),
-      });
-      purged++;
-      continue;
-    }
-
-    // Ya confirmado en un ciclo anterior — solo mantener en queue hasta el TTL.
-    if (item.confirmed) { remaining.push(item); continue; }
-
-    let serverId = item.serverId;
-
-    // Si solo hay localId, buscar su serverId en el outbox (debe estar ya sincronizado)
-    if (!serverId && item.localId && isTauri) {
-      try {
-        const sid = await getServerIdForLocalId(item.localId);
-        if (sid && sid > 0) serverId = sid;
-      } catch { /* ignore */ }
-    }
-
-    // Sin serverId todavía → la orden aún no se sincronizó, esperar siguiente ciclo
-    if (!serverId) {
-      console.warn('[KITCHEN] sync: waiting for serverId mapping', {
-        localId: item.localId,
-        ageSeconds: Math.round(age / 1000),
-      });
-      waitingServerId++;
-      remaining.push(item);
-      continue;
-    }
-
+  for (const item of pending) {
+    if (!item.server_id || item.server_id <= 0) continue; // sanity
     try {
-      const res = await fetch(`${apiBase}/orders/${serverId}/complete`, {
+      const res = await fetch(`${apiBase}/orders/${item.server_id}/complete`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(15_000),
       });
 
-      // Verificar que el backend confirmó el cambio de status antes de
-      // considerar la entrada como sincronizada. 404/409 = ya no aplica.
-      let confirmed = res.status === 404 || res.status === 409;
-      let bodyStatus: string | undefined;
-      if (res.ok) {
-        try {
-          const body = await res.json();
-          bodyStatus = body?.status;
-          confirmed = body?.status === 'completed';
-        } catch {
-          confirmed = true; // respuesta sin body parseable — confiar en el 200
-        }
+      // 200/2xx/404/409 todos cuentan como confirmado — el server ya no
+      // tiene que cambiar nada o ya lo hizo. Solo errores 5xx/red ameritan reintento.
+      const confirmed = res.ok || res.status === 404 || res.status === 409;
+
+      if (confirmed) {
+        await markKitchenCompleteSynced(item.local_id);
+        confirmedThisCycle++;
+      } else {
+        reintented++;
       }
-
-      console.warn('[KITCHEN] sync: PATCH attempt', {
-        serverId,
-        localId: item.localId,
-        httpStatus: res.status,
-        bodyStatus,
-        confirmed,
-        ageSeconds: Math.round(age / 1000),
-      });
-
-      // Mantenemos la entrada hasta que pase el TTL para que el filtro de UI
-      // siga ocultándola. Si se confirmó, marcarla para no reintentar el PATCH.
-      if (confirmed) confirmedThisCycle++;
-      else reintented++;
-      remaining.push(confirmed ? { ...item, confirmed: true } : item);
-    } catch (e) {
-      console.warn('[KITCHEN] sync: PATCH error (will retry)', {
-        serverId,
-        localId: item.localId,
-        error: String(e),
-        ageSeconds: Math.round(age / 1000),
-      });
+    } catch {
       reintented++;
-      remaining.push(item);
+      // El loop seguirá; la próxima vuelta los reintentará.
     }
   }
 
-  if (purged + confirmedThisCycle + reintented + waitingServerId > 0) {
+  if (confirmedThisCycle + reintented > 0) {
     console.warn('[KITCHEN] sync: cycle summary', {
-      queueSize: queue.length,
-      purged,
+      pending: pending.length,
       confirmedThisCycle,
       reintented,
-      waitingServerId,
-      remaining: remaining.length,
     });
   }
-
-  if (remaining.length === 0) localStorage.removeItem('pos_pending_completes');
-  else localStorage.setItem('pos_pending_completes', JSON.stringify(remaining));
 }
 
 export async function syncPendingReorders(
@@ -273,6 +197,7 @@ export function startSyncService(
     await syncPendingReorders(getToken, apiBase).catch(() => {});
   };
 
+  trySyncNow = trySync;
   window.addEventListener('online', trySync);
   syncInterval = setInterval(trySync, 30_000);
   trySync();
@@ -283,4 +208,5 @@ export function stopSyncService(): void {
     clearInterval(syncInterval);
     syncInterval = null;
   }
+  trySyncNow = null;
 }
