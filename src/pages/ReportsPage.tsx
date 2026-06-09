@@ -17,7 +17,7 @@ interface Branch { id: number; name: string; }
 
 interface Summary {
   totalSales: number; totalOrders: number; avgTicket: number;
-  cashSales: number; cardSales: number; transferSales: number;
+  cashSales: number; cardSales: number; qrSales: number;
   voidedCount: number; voidedTotal: number;
 }
 interface HourRow  { hour: string; total: number; orders: number; }
@@ -295,7 +295,7 @@ function TabPagos({ summary, loading }: { summary: Summary | null; loading: bool
   const pieData = [
     { name: 'Efectivo',       value: summary.cashSales,     color: '#10b981' },
     { name: 'Tarjeta',        value: summary.cardSales,     color: '#3b82f6' },
-    { name: 'Transferencia',  value: summary.transferSales, color: '#f59e0b' },
+    { name: 'QR',             value: summary.qrSales,       color: '#f59e0b' },
   ].filter(d => d.value > 0);
 
   if (pieData.length === 0) return (
@@ -442,7 +442,7 @@ export default function ReportsPage() {
               <StatCard label="Ventas totales"  value={bs(summary.totalSales, currency)}           sub={`${summary.totalOrders} órdenes`}  color="blue" />
               <StatCard label="Ticket promedio" value={bs(summary.avgTicket, currency)}            sub="por orden"                         color="green" />
               <StatCard label="Efectivo"        value={bs(summary.cashSales, currency)}            sub="método de pago"                    color="amber" />
-              <StatCard label="QR / Digital"    value={bs(summary.cardSales + summary.transferSales, currency)} sub="tarjeta + transferencia" color="purple" />
+              <StatCard label="QR / Digital"    value={bs(summary.cardSales + summary.qrSales, currency)} sub="tarjeta + QR" color="purple" />
               <StatCard label="Anulaciones"     value={bs(summary.voidedTotal, currency)}          sub={`${summary.voidedCount} venta(s) anulada(s)`} color="red" />
             </>
           ) : null}

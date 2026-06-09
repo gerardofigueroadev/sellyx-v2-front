@@ -6,13 +6,13 @@ import CustomerHistoryModal from './CustomerHistoryModal';
 
 const CART_API = `${BASE_URL}/api`;
 
-export type PaymentMethod = 'cash' | 'card' | 'transfer';
-export type OrderType = 'dine_in' | 'takeaway';
+export type PaymentMethod = 'cash' | 'card' | 'qr';
+export type OrderType = 'dine_in' | 'takeaway' | 'delivery';
 
 const PAYMENT_OPTIONS: { key: PaymentMethod; emoji: string; label: string; checkoutLabel: string }[] = [
-  { key: 'cash',     emoji: '💵', label: 'Efectivo',           checkoutLabel: '💵 Cobrar en efectivo' },
-  { key: 'card',     emoji: '💳', label: 'Tarjeta',            checkoutLabel: '💳 Cobrar con tarjeta' },
-  { key: 'transfer', emoji: '📱', label: 'QR / Transferencia', checkoutLabel: '📱 Cobrar con QR' },
+  { key: 'cash', emoji: '💵', label: 'Efectivo', checkoutLabel: '💵 Cobrar en efectivo' },
+  { key: 'card', emoji: '💳', label: 'Tarjeta',  checkoutLabel: '💳 Cobrar con tarjeta' },
+  { key: 'qr',   emoji: '📱', label: 'QR',       checkoutLabel: '📱 Cobrar con QR' },
 ];
 
 interface FoundCustomer {

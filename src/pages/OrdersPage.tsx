@@ -12,7 +12,7 @@ const apiFetch = (token: string, path: string, opts?: RequestInit) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type OrderStatus = 'pending' | 'completed' | 'cancelled' | 'voided';
 type OrderChannel = 'pos' | 'chatbot' | 'web';
-type OrderType = 'dine_in' | 'takeaway';
+type OrderType = 'dine_in' | 'takeaway' | 'delivery';
 
 interface OrderItem {
   id: number;
@@ -27,7 +27,7 @@ interface Order {
   orderNumber: string;
   ticketNumber: number;
   status: OrderStatus;
-  paymentMethod: 'cash' | 'card' | 'transfer';
+  paymentMethod: 'cash' | 'card' | 'qr';
   channel: OrderChannel;
   orderType: OrderType;
   total: number;
@@ -66,12 +66,13 @@ const CHANNEL_LABEL: Record<OrderChannel, string> = {
 const ORDER_TYPE_LABEL: Record<OrderType, string> = {
   dine_in:  '🍽️ Mesa',
   takeaway: '🥡 Llevar',
+  delivery: '🛵 Delivery',
 };
 
 const PAYMENT_LABEL: Record<string, string> = {
-  cash:     '💵 Efectivo',
-  card:     '💳 Tarjeta',
-  transfer: '📱 QR / Tigo',
+  cash: '💵 Efectivo',
+  card: '💳 Tarjeta',
+  qr:   '📱 QR',
 };
 
 function timeAgo(dateStr: string) {
@@ -507,7 +508,7 @@ export default function OrdersPage() {
               onClick={() => openOrder(order)}
               className={`px-5 py-4 border-b border-slate-700/30 grid gap-4 items-center hover:bg-slate-800/60 cursor-pointer transition-colors group ${
                 isAdmin ? 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]'
-              }`}
+              } ${order.channel === 'chatbot' ? 'border-l-4 border-l-[#25D366] bg-[#25D366]/5' : ''}`}
             >
               {/* Número */}
               <div className="flex items-center gap-2.5">

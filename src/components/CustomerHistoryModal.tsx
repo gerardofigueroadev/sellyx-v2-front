@@ -37,9 +37,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const PM_LABEL: Record<string, string> = {
-  cash:     '💵 Efectivo',
-  card:     '💳 Tarjeta',
-  transfer: '📱 QR / Trans.',
+  cash: '💵 Efectivo',
+  card: '💳 Tarjeta',
+  qr:   '📱 QR',
 };
 
 export default function CustomerHistoryModal({ customerId, onClose, onUpdated }: Props) {

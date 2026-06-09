@@ -881,9 +881,9 @@ function FlagToggle({ label, description, value, onChange, saving }: {
 const CURRENCY_PRESETS = ['Bs.', '$', 'S/.', 'COP', 'MXN', 'Q', '€', '£'];
 
 const PAYMENT_OPTIONS: { key: string; emoji: string; label: string }[] = [
-  { key: 'cash',     emoji: '💵', label: 'Efectivo' },
-  { key: 'card',     emoji: '💳', label: 'Tarjeta' },
-  { key: 'transfer', emoji: '📱', label: 'QR / Transferencia' },
+  { key: 'cash', emoji: '💵', label: 'Efectivo' },
+  { key: 'card', emoji: '💳', label: 'Tarjeta' },
+  { key: 'qr',   emoji: '📱', label: 'QR' },
 ];
 
 function TabFlags({ token }: { token: string }) {
@@ -961,7 +961,7 @@ function TabFlags({ token }: { token: string }) {
   };
 
   const togglePaymentMethod = (key: string) => {
-    const current: string[] = settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer'];
+    const current: string[] = settings.enabledPaymentMethods ?? ['cash', 'card', 'qr'];
     const isEnabled = current.includes(key);
     if (isEnabled && current.length === 1) { toast.warning('Debes tener al menos un método activo'); return; }
     const updated = isEnabled ? current.filter(k => k !== key) : [...current, key];
@@ -1036,8 +1036,8 @@ function TabFlags({ token }: { token: string }) {
           </div>
           <div className="space-y-2">
             {PAYMENT_OPTIONS.map(({ key, emoji, label }) => {
-              const enabled = (settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer']).includes(key);
-              const isLast  = (settings.enabledPaymentMethods ?? ['cash', 'card', 'transfer']).length === 1 && enabled;
+              const enabled = (settings.enabledPaymentMethods ?? ['cash', 'card', 'qr']).includes(key);
+              const isLast  = (settings.enabledPaymentMethods ?? ['cash', 'card', 'qr']).length === 1 && enabled;
               return (
                 <div key={key} className="flex items-center justify-between py-2 border-t border-slate-700/40 first:border-t-0">
                   <div className="flex items-center gap-2">
@@ -1574,7 +1574,7 @@ function TabWhatsapp({ token }: { token: string }) {
 
         <div className="bg-slate-700/40 rounded-xl p-3 text-xs text-slate-400 space-y-0.5">
           <p className="font-medium text-slate-300">URL del webhook (pégala en Meta):</p>
-          <p className="font-mono text-green-400 break-all">https://sellyx-v2-back.onrender.com/api/webhooks/whatsapp</p>
+          <p className="font-mono text-green-400 break-all">{API}/webhooks/whatsapp</p>
         </div>
       </div>
 

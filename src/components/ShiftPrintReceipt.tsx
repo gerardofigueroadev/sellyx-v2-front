@@ -24,7 +24,7 @@ export interface ShiftReportData {
   totalSales: number;
   cashSales: number;
   cardSales: number;
-  transferSales: number;
+  qrSales: number;
   expectedCash: number;
   closingAmount: number | null;
   difference: number | null;
@@ -112,7 +112,7 @@ export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: {
         <div style={{ marginBottom: '1px' }}>MÉTODOS DE PAGO</div>
         {data.cashSales     > 0 && <div>{pad('  Efectivo:', `${cur} ${data.cashSales.toFixed(2)}`)}</div>}
         {data.cardSales     > 0 && <div>{pad('  Tarjeta:', `${cur} ${data.cardSales.toFixed(2)}`)}</div>}
-        {data.transferSales > 0 && <div>{pad('  Transferencia:', `${cur} ${data.transferSales.toFixed(2)}`)}</div>}
+        {data.qrSales       > 0 && <div>{pad('  QR:', `${cur} ${data.qrSales.toFixed(2)}`)}</div>}
       </div>
 
       <div style={{ borderTop: '1px dashed #000', margin: '2px 0' }} />

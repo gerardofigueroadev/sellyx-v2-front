@@ -34,7 +34,7 @@ export interface AuthUser {
   subscription: SubscriptionInfo | null;
 }
 
-const DEFAULT_PAYMENT_METHODS = ['cash', 'card', 'transfer'];
+const DEFAULT_PAYMENT_METHODS = ['cash', 'card', 'qr'];
 
 function loadCurrency()        { return localStorage.getItem('pos_currency') ?? 'Bs.'; }
 function loadPaymentMethods()  { try { return JSON.parse(localStorage.getItem('pos_payment_methods') ?? 'null') ?? DEFAULT_PAYMENT_METHODS; } catch { return DEFAULT_PAYMENT_METHODS; } }

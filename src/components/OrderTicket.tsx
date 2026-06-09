@@ -4,7 +4,7 @@ export interface OrderTicketData {
   ticketNumber: number;
   orderNumber: string;
   paymentMethod: string;
-  orderType?: 'dine_in' | 'takeaway';
+  orderType?: 'dine_in' | 'takeaway' | 'delivery';
   items: { name: string; quantity: number; unitPrice: number; subtotal: number; notes?: string }[];
   total: number;
   notes?: string;
@@ -16,7 +16,7 @@ export interface OrderTicketData {
 }
 
 const PAY_LABEL: Record<string, string> = {
-  cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia',
+  cash: 'Efectivo', card: 'Tarjeta', qr: 'QR',
 };
 
 function pad(left: string, right: string, width = 30) {
@@ -43,7 +43,7 @@ export function ClientTicket({ d, cur }: { d: OrderTicketData; cur: string }) {
         {d.cashierName && <div>{pad('Cajero:', d.cashierName)}</div>}
         <div>{pad('Pago:', PAY_LABEL[d.paymentMethod] ?? d.paymentMethod)}</div>
         {d.orderType && (
-          <div>{pad('Tipo:', d.orderType === 'takeaway' ? 'Para llevar' : 'Para mesa')}</div>
+          <div>{pad('Tipo:', d.orderType === 'delivery' ? 'Delivery' : d.orderType === 'takeaway' ? 'Para llevar' : 'Para mesa')}</div>
         )}
       </div>
 
@@ -88,7 +88,7 @@ export function KitchenTicket({ d }: { d: OrderTicketData }) {
         <div style={{ fontSize: '28px' }}>#{d.ticketNumber}</div>
         {d.orderType && (
           <div style={{ fontSize: '20px', border: '2px solid #000', display: 'inline-block', padding: '1px 8px', marginTop: '2px' }}>
-            {d.orderType === 'takeaway' ? 'PARA LLEVAR' : 'MESA'}
+            {d.orderType === 'delivery' ? 'DELIVERY' : d.orderType === 'takeaway' ? 'PARA LLEVAR' : 'MESA'}
           </div>
         )}
         <div style={{ fontSize: '16px', marginTop: '2px' }}>
