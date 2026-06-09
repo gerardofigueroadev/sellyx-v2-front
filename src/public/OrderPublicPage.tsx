@@ -5,7 +5,7 @@ const API = `${API_URL}/api`;
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface Branch { id: number; name: string }
-interface Ctx { orgName: string; currency: string; branches: Branch[] }
+interface Ctx { orgName: string; currency: string; whatsappPhone: string; branches: Branch[] }
 interface Product { id: number; name: string; price: number; emoji: string | null; category: string | null }
 type OrderType = 'takeaway' | 'delivery';
 type PaymentMethod = 'cash' | 'qr';
@@ -53,6 +53,8 @@ export default function OrderPublicPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  // QR: estado del popup de confirmación de pago ('idle' | 'paying' | 'paid').
+  const [qrPay, setQrPay] = useState<'idle' | 'paying' | 'paid'>('idle');
 
   const cur = ctx?.currency ?? '';
 
@@ -102,8 +104,10 @@ export default function OrderPublicPage() {
   const inc = (id: number) => setQty((q) => ({ ...q, [id]: (q[id] ?? 0) + 1 }));
   const dec = (id: number) => setQty((q) => ({ ...q, [id]: Math.max(0, (q[id] ?? 0) - 1) }));
 
-  const submit = async () => {
-    if (!branch || cartItems.length === 0 || phone.trim().length < 5) return;
+  // Crea el pedido. Devuelve true si se creó. `goConfirm` controla si navega
+  // a la pantalla de confirmación (efectivo) o no (QR maneja su propio flujo).
+  const submit = async (goConfirm = true): Promise<boolean> => {
+    if (!branch || cartItems.length === 0 || phone.trim().length < 5) return false;
     setSubmitting(true);
     setSubmitErr(null);
     try {
@@ -121,12 +125,26 @@ export default function OrderPublicPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'No se pudo crear el pedido');
       setConfirmation({ orderNumber: data.orderNumber, ticketNumber: data.ticketNumber, total: data.total });
-      setStep('confirm');
+      if (goConfirm) setStep('confirm');
+      return true;
     } catch (e) {
       setSubmitErr((e as Error).message);
+      return false;
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // QR "Sí pagué": crea el pedido, muestra "Pagado", espera 2s y abre WhatsApp.
+  const confirmQrPaid = async () => {
+    setQrPay('paying');
+    const ok = await submit(false); // crea el pedido sin navegar a 'confirm'
+    if (!ok) { setQrPay('idle'); return; }
+    setQrPay('paid');
+    setTimeout(() => {
+      const waPhone = ctx?.whatsappPhone;
+      window.location.href = waPhone ? `https://wa.me/${waPhone}` : 'https://wa.me/';
+    }, 2000);
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -270,23 +288,49 @@ export default function OrderPublicPage() {
 
       {step === 'qr_pending' && (
         <Card>
-          <button onClick={() => setStep('checkout')} className="text-slate-400 text-xs mb-3">← Volver</button>
+          {qrPay === 'idle' && (
+            <button onClick={() => setStep('checkout')} className="text-slate-400 text-xs mb-3">← Volver</button>
+          )}
           <div className="text-center py-4">
             <div className="text-5xl mb-3">📱</div>
             <h2 className="text-white font-bold text-lg">Pago con QR</h2>
-            <div className="mt-3 inline-block bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs rounded-lg px-3 py-2">
-              🚧 En construcción — pronto podrás pagar por QR aquí.
+            <p className="text-slate-400 text-sm mt-3">Escanea el QR y paga el total:</p>
+            <p className="text-white font-bold text-xl mt-1">{money(total, cur)}</p>
+            {/* TODO(pasarela): aquí irá el QR real de la pasarela. Por ahora el
+                cliente confirma manualmente que pagó. */}
+            <div className="mt-4 mx-auto w-40 h-40 bg-white rounded-xl flex items-center justify-center text-slate-400 text-xs">
+              QR de pago<br/>(en construcción)
             </div>
-            <p className="text-slate-400 text-sm mt-4">Total a pagar: <span className="text-white font-bold">{money(total, cur)}</span></p>
-            {/* TODO(pasarela): integrar pasarela QR. Cuando confirme el pago,
-                recién entonces llamar a submit() para crear el pedido. */}
-            <button disabled
-              className="mt-5 w-full bg-slate-700 text-slate-500 py-2.5 rounded-xl text-sm font-medium cursor-not-allowed">
-              Ya pagué
+
+            <button
+              onClick={confirmQrPaid}
+              disabled={qrPay !== 'idle' || phone.trim().length < 5}
+              className="mt-6 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white py-2.5 rounded-xl text-sm font-medium">
+              Sí, ya pagué
             </button>
-            <p className="text-slate-600 text-xs mt-2">El botón se activará cuando la pasarela esté lista.</p>
           </div>
         </Card>
+      )}
+
+      {/* Popup de confirmación de pago QR */}
+      {(qrPay === 'paying' || qrPay === 'paid') && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-xs w-full text-center">
+            {qrPay === 'paying' ? (
+              <>
+                <Spinner />
+                <p className="text-white text-sm mt-3">Confirmando tu pago...</p>
+              </>
+            ) : (
+              <>
+                <div className="text-5xl mb-2">✅</div>
+                <h3 className="text-white font-bold text-lg">¡Pagado!</h3>
+                <p className="text-slate-400 text-sm mt-1">Tu pedido fue registrado.</p>
+                <p className="text-slate-500 text-xs mt-3">Abriendo WhatsApp...</p>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {step === 'confirm' && confirmation && (
