@@ -55,6 +55,9 @@ export default function OrderPublicPage() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   // QR: estado del popup de confirmación de pago ('idle' | 'paying' | 'paid').
   const [qrPay, setQrPay] = useState<'idle' | 'paying' | 'paid'>('idle');
+  // Wizard del menú por categorías.
+  const [catIndex, setCatIndex] = useState(0);
+  const [showCart, setShowCart] = useState(false);
 
   const cur = ctx?.currency ?? '';
 
@@ -100,6 +103,19 @@ export default function OrderPublicPage() {
   const cartItems = products.filter((p) => (qty[p.id] ?? 0) > 0);
   const total = cartItems.reduce((s, p) => s + p.price * (qty[p.id] ?? 0), 0);
   const totalUnits = cartItems.reduce((s, p) => s + (qty[p.id] ?? 0), 0);
+
+  // Categorías en su orden de aparición (el backend ya ordena por sortOrder).
+  const categories = useMemo(() => {
+    const seen: string[] = [];
+    for (const p of products) {
+      const c = p.category || 'Otros';
+      if (!seen.includes(c)) seen.push(c);
+    }
+    return seen;
+  }, [products]);
+  const currentCat = categories[catIndex];
+  const catProducts = products.filter((p) => (p.category || 'Otros') === currentCat);
+  const isLastCat = catIndex >= categories.length - 1;
 
   const inc = (id: number) => setQty((q) => ({ ...q, [id]: (q[id] ?? 0) + 1 }));
   const dec = (id: number) => setQty((q) => ({ ...q, [id]: Math.max(0, (q[id] ?? 0) - 1) }));
@@ -176,42 +192,115 @@ export default function OrderPublicPage() {
       {step === 'menu' && (
         <>
           <Card>
-            <h2 className="text-white font-semibold mb-3">Menú</h2>
             {loadingProducts ? <Spinner /> : products.length === 0 ? (
               <p className="text-slate-400 text-sm text-center py-4">No hay productos disponibles.</p>
             ) : (
-              <div className="space-y-2">
-                {products.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between gap-2 py-2 border-b border-slate-700/40 last:border-0">
-                    <div className="min-w-0">
-                      <p className="text-white text-sm truncate">{p.emoji ? `${p.emoji} ` : ''}{p.name}</p>
-                      <p className="text-slate-400 text-xs">{money(p.price, cur)}</p>
+              <>
+                {/* Progreso de secciones */}
+                <div className="flex items-center gap-1.5 mb-3">
+                  {categories.map((c, i) => (
+                    <div key={c} className={`h-1.5 flex-1 rounded-full ${i <= catIndex ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                  ))}
+                </div>
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="text-white font-semibold">{currentCat}</h2>
+                  <span className="text-slate-500 text-xs">{catIndex + 1} de {categories.length}</span>
+                </div>
+
+                <div className="space-y-2">
+                  {catProducts.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 py-2 border-b border-slate-700/40 last:border-0">
+                      <div className="min-w-0">
+                        <p className="text-white text-sm truncate">{p.emoji ? `${p.emoji} ` : ''}{p.name}</p>
+                        <p className="text-slate-400 text-xs">{money(p.price, cur)}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={() => dec(p.id)} disabled={!qty[p.id]}
+                          className="w-8 h-8 rounded-lg bg-slate-700 text-white text-lg disabled:opacity-30">−</button>
+                        <span className="w-6 text-center text-white text-sm">{qty[p.id] ?? 0}</span>
+                        <button onClick={() => inc(p.id)}
+                          className="w-8 h-8 rounded-lg bg-emerald-600 text-white text-lg">+</button>
+                      </div>
                     </div>
+                  ))}
+                </div>
+
+                {/* Navegación entre secciones */}
+                <div className="flex gap-2 mt-5">
+                  {catIndex > 0 && (
+                    <button onClick={() => setCatIndex((i) => i - 1)}
+                      className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-sm font-medium">
+                      ← Atrás
+                    </button>
+                  )}
+                  {!isLastCat ? (
+                    <button onClick={() => setCatIndex((i) => i + 1)}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-sm font-medium">
+                      Siguiente →
+                    </button>
+                  ) : (
+                    <button onClick={() => setStep('checkout')} disabled={totalUnits === 0}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white py-2.5 rounded-xl text-sm font-medium">
+                      Continuar al pago
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+
+          {/* Barra fija: total acumulado + ver carrito */}
+          <StickyBar>
+            <button onClick={() => totalUnits > 0 && setShowCart(true)}
+              className="text-white text-sm text-left disabled:opacity-60" disabled={totalUnits === 0}>
+              <span className="text-slate-400">{totalUnits} item(s) · </span>
+              <span className="font-bold">{money(total, cur)}</span>
+              {totalUnits > 0 && <span className="text-emerald-400 text-xs ml-2 underline">ver</span>}
+            </button>
+            {isLastCat ? (
+              <button onClick={() => setStep('checkout')} disabled={totalUnits === 0}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-2 rounded-xl text-sm font-medium">
+                Pagar
+              </button>
+            ) : (
+              <button onClick={() => setCatIndex((i) => i + 1)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-sm font-medium">
+                Siguiente
+              </button>
+            )}
+          </StickyBar>
+        </>
+      )}
+
+      {/* Modal: ver/editar carrito acumulado */}
+      {showCart && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50" onClick={() => setShowCart(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-t-2xl sm:rounded-2xl p-5 max-w-md w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold">Tu pedido</h3>
+              <button onClick={() => setShowCart(false)} className="text-slate-400 text-sm">Cerrar</button>
+            </div>
+            {cartItems.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-4">Aún no agregaste nada.</p>
+            ) : (
+              <div className="space-y-2">
+                {cartItems.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2">
+                    <p className="text-white text-sm min-w-0 truncate">{p.emoji ? `${p.emoji} ` : ''}{p.name}</p>
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => dec(p.id)} disabled={!qty[p.id]}
-                        className="w-8 h-8 rounded-lg bg-slate-700 text-white text-lg disabled:opacity-30">−</button>
-                      <span className="w-6 text-center text-white text-sm">{qty[p.id] ?? 0}</span>
-                      <button onClick={() => inc(p.id)}
-                        className="w-8 h-8 rounded-lg bg-emerald-600 text-white text-lg">+</button>
+                      <button onClick={() => dec(p.id)} className="w-7 h-7 rounded-lg bg-slate-700 text-white">−</button>
+                      <span className="w-5 text-center text-white text-sm">{qty[p.id]}</span>
+                      <button onClick={() => inc(p.id)} className="w-7 h-7 rounded-lg bg-emerald-600 text-white">+</button>
                     </div>
                   </div>
                 ))}
+                <div className="flex justify-between text-white font-bold text-sm pt-2 border-t border-slate-600/50">
+                  <span>Total</span><span>{money(total, cur)}</span>
+                </div>
               </div>
             )}
-          </Card>
-          {totalUnits > 0 && (
-            <StickyBar>
-              <div className="text-white text-sm">
-                <span className="text-slate-400">{totalUnits} item(s) · </span>
-                <span className="font-bold">{money(total, cur)}</span>
-              </div>
-              <button onClick={() => setStep('checkout')}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-sm font-medium">
-                Continuar
-              </button>
-            </StickyBar>
-          )}
-        </>
+          </div>
+        </div>
       )}
 
       {step === 'checkout' && (
