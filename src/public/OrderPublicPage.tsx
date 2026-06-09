@@ -13,11 +13,18 @@ type Step = 'branch' | 'menu' | 'checkout' | 'confirm';
 
 interface Confirmation { orderNumber: string; ticketNumber: number; total: number }
 
+// Quita el código de país de Bolivia (591) y deja solo dígitos.
+// El bot manda "59178590523"; mostramos y guardamos "78590523".
+function normalizePhone(raw: string): string {
+  const digits = (raw ?? '').replace(/\D/g, '');
+  return digits.startsWith('591') ? digits.slice(3) : digits;
+}
+
 // ── Parseo de la URL: /order/:token?phone=... ─────────────────────────────────
 function parseUrl() {
   const parts = window.location.pathname.split('/').filter(Boolean); // ['order', '<token>']
   const token = parts[1] ?? '';
-  const phone = new URLSearchParams(window.location.search).get('phone') ?? '';
+  const phone = normalizePhone(new URLSearchParams(window.location.search).get('phone') ?? '');
   return { token, phone };
 }
 
@@ -78,9 +85,9 @@ export default function OrderPublicPage() {
     })();
   }, [branch, token]);
 
-  // Si delivery, forzar efectivo.
+  // Si delivery, forzar QR (delivery solo se paga con QR).
   useEffect(() => {
-    if (orderType === 'delivery') setPayment('cash');
+    if (orderType === 'delivery') setPayment('qr');
   }, [orderType]);
 
   const cartItems = products.filter((p) => (qty[p.id] ?? 0) > 0);
@@ -204,17 +211,17 @@ export default function OrderPublicPage() {
             {/* Medio de pago (condicional) */}
             <h3 className="text-white text-sm font-medium mb-2">Medio de pago</h3>
             <div className="grid grid-cols-2 gap-2 mb-2">
-              <button onClick={() => setPayment('cash')}
-                className={`p-3 rounded-xl border text-center transition ${payment === 'cash' ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'}`}>
+              <button onClick={() => orderType === 'takeaway' && setPayment('cash')}
+                disabled={orderType === 'delivery'}
+                className={`p-3 rounded-xl border text-center transition ${payment === 'cash' ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'} ${orderType === 'delivery' ? 'opacity-30 cursor-not-allowed' : ''}`}>
                 💵<div className="text-xs mt-1">Efectivo</div>
               </button>
-              <button onClick={() => orderType === 'takeaway' && setPayment('qr')}
-                disabled={orderType === 'delivery'}
-                className={`p-3 rounded-xl border text-center transition ${payment === 'qr' ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'} ${orderType === 'delivery' ? 'opacity-30 cursor-not-allowed' : ''}`}>
+              <button onClick={() => setPayment('qr')}
+                className={`p-3 rounded-xl border text-center transition ${payment === 'qr' ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'}`}>
                 📱<div className="text-xs mt-1">QR</div>
               </button>
             </div>
-            {orderType === 'delivery' && <p className="text-slate-500 text-xs mb-3">El delivery solo admite pago en efectivo.</p>}
+            {orderType === 'delivery' && <p className="text-slate-500 text-xs mb-3">El delivery solo admite pago con QR.</p>}
 
             {/* Teléfono */}
             <h3 className="text-white text-sm font-medium mb-2 mt-3">Tu teléfono</h3>
