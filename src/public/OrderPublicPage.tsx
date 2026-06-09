@@ -9,7 +9,7 @@ interface Ctx { orgName: string; currency: string; branches: Branch[] }
 interface Product { id: number; name: string; price: number; emoji: string | null; category: string | null }
 type OrderType = 'takeaway' | 'delivery';
 type PaymentMethod = 'cash' | 'qr';
-type Step = 'branch' | 'menu' | 'checkout' | 'confirm';
+type Step = 'branch' | 'menu' | 'checkout' | 'qr_pending' | 'confirm';
 
 interface Confirmation { orderNumber: string; ticketNumber: number; total: number }
 
@@ -24,14 +24,18 @@ function normalizePhone(raw: string): string {
 function parseUrl() {
   const parts = window.location.pathname.split('/').filter(Boolean); // ['order', '<token>']
   const token = parts[1] ?? '';
-  const phone = normalizePhone(new URLSearchParams(window.location.search).get('phone') ?? '');
-  return { token, phone };
+  const qs = new URLSearchParams(window.location.search);
+  const phone = normalizePhone(qs.get('phone') ?? '');
+  const rawType = qs.get('type');
+  // Tipo preseleccionado desde el chat (solo takeaway/delivery son válidos aquí).
+  const presetType: OrderType | null = rawType === 'delivery' || rawType === 'takeaway' ? rawType : null;
+  return { token, phone, presetType };
 }
 
 const money = (n: number, cur: string) => `${cur ? cur + ' ' : ''}${n.toFixed(2)}`;
 
 export default function OrderPublicPage() {
-  const { token, phone: phoneFromLink } = useMemo(parseUrl, []);
+  const { token, phone: phoneFromLink, presetType } = useMemo(parseUrl, []);
 
   const [ctx, setCtx] = useState<Ctx | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -42,8 +46,9 @@ export default function OrderPublicPage() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [qty, setQty] = useState<Record<number, number>>({}); // productId -> cantidad
 
-  const [orderType, setOrderType] = useState<OrderType>('takeaway');
-  const [payment, setPayment] = useState<PaymentMethod>('cash');
+  const [orderType, setOrderType] = useState<OrderType>(presetType ?? 'takeaway');
+  // Si delivery vino del chat, el pago arranca en QR (delivery solo paga QR).
+  const [payment, setPayment] = useState<PaymentMethod>(presetType === 'delivery' ? 'qr' : 'cash');
   const [phone, setPhone] = useState(phoneFromLink);
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
@@ -197,16 +202,23 @@ export default function OrderPublicPage() {
             <button onClick={() => setStep('menu')} className="text-slate-400 text-xs mb-3">← Volver al menú</button>
             <h2 className="text-white font-semibold mb-3">¿Cómo lo quieres?</h2>
 
-            {/* Tipo de entrega */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {([['takeaway', '🥡', 'Recoger en local'], ['delivery', '🛵', 'Delivery']] as const).map(([key, emoji, label]) => (
-                <button key={key} onClick={() => setOrderType(key)}
-                  className={`p-3 rounded-xl border text-center transition ${orderType === key ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'}`}>
-                  <div className="text-xl">{emoji}</div>
-                  <div className="text-xs mt-1">{label}</div>
-                </button>
-              ))}
+            {/* Tipo de entrega. Si vino preseleccionado del chat, se muestra fijo. */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              {([['takeaway', '🥡', 'Recoger en local'], ['delivery', '🛵', 'Delivery']] as const).map(([key, emoji, label]) => {
+                const selected = orderType === key;
+                const locked = presetType != null;
+                if (locked && !selected) return null; // si está bloqueado, solo mostramos el elegido
+                return (
+                  <button key={key} onClick={() => !locked && setOrderType(key)} disabled={locked}
+                    className={`p-3 rounded-xl border text-center transition ${selected ? 'border-emerald-500 bg-emerald-600/15 text-white' : 'border-slate-600 bg-slate-700/40 text-slate-300'} ${locked ? 'col-span-2 cursor-default' : ''}`}>
+                    <div className="text-xl">{emoji}</div>
+                    <div className="text-xs mt-1">{label}</div>
+                  </button>
+                );
+              })}
             </div>
+            {presetType != null && <p className="text-slate-500 text-xs mb-4">Elegiste esto en el chat 👌</p>}
+            {presetType == null && <div className="mb-4" />}
 
             {/* Medio de pago (condicional) */}
             <h3 className="text-white text-sm font-medium mb-2">Medio de pago</h3>
@@ -245,13 +257,36 @@ export default function OrderPublicPage() {
           </Card>
           <StickyBar>
             <div className="text-white text-sm font-bold">{money(total, cur)}</div>
-            <button onClick={submit} disabled={submitting || phone.trim().length < 5}
+            <button
+              onClick={() => (payment === 'qr' ? setStep('qr_pending') : submit())}
+              disabled={submitting || phone.trim().length < 5}
               className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-2 rounded-xl text-sm font-medium flex items-center gap-2">
               {submitting && <Spinner small />}
-              Confirmar pedido
+              {payment === 'qr' ? 'Continuar al pago' : 'Confirmar pedido'}
             </button>
           </StickyBar>
         </>
+      )}
+
+      {step === 'qr_pending' && (
+        <Card>
+          <button onClick={() => setStep('checkout')} className="text-slate-400 text-xs mb-3">← Volver</button>
+          <div className="text-center py-4">
+            <div className="text-5xl mb-3">📱</div>
+            <h2 className="text-white font-bold text-lg">Pago con QR</h2>
+            <div className="mt-3 inline-block bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs rounded-lg px-3 py-2">
+              🚧 En construcción — pronto podrás pagar por QR aquí.
+            </div>
+            <p className="text-slate-400 text-sm mt-4">Total a pagar: <span className="text-white font-bold">{money(total, cur)}</span></p>
+            {/* TODO(pasarela): integrar pasarela QR. Cuando confirme el pago,
+                recién entonces llamar a submit() para crear el pedido. */}
+            <button disabled
+              className="mt-5 w-full bg-slate-700 text-slate-500 py-2.5 rounded-xl text-sm font-medium cursor-not-allowed">
+              Ya pagué
+            </button>
+            <p className="text-slate-600 text-xs mt-2">El botón se activará cuando la pasarela esté lista.</p>
+          </div>
+        </Card>
       )}
 
       {step === 'confirm' && confirmation && (
