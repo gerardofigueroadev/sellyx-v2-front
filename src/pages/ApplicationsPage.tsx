@@ -33,8 +33,42 @@ interface Application {
   availableFrom: string | null;
   weekendAvailability: boolean;
   category: Category;
+  discardReason: string | null;
+  isDuplicate: boolean;
   status: Status;
   createdAt: string;
+}
+
+// ─── Filtro por periodo de fecha (igual que Pedidos) ──────────────────────────
+type Period = 'all' | 'day' | 'week' | 'month' | 'year';
+
+const PERIOD_LABELS: { key: Period; label: string }[] = [
+  { key: 'all',   label: 'Todas' },
+  { key: 'day',   label: 'Hoy' },
+  { key: 'week',  label: 'Semana' },
+  { key: 'month', label: 'Mes' },
+  { key: 'year',  label: 'Año' },
+];
+
+/** Convierte un periodo en rango [from, to] (YYYY-MM-DD), o null si 'all'. */
+function periodToRange(period: Period): { from: string; to: string } | null {
+  if (period === 'all') return null;
+  const now = new Date();
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  if (period === 'day') return { from: fmt(now), to: fmt(now) };
+  if (period === 'month') {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: fmt(first), to: fmt(last) };
+  }
+  if (period === 'year') {
+    return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+  }
+  // week: lunes a domingo de la semana actual
+  const day = now.getDay() || 7; // domingo=0 → 7
+  const monday = new Date(now); monday.setDate(now.getDate() - day + 1);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  return { from: fmt(monday), to: fmt(sunday) };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,6 +121,11 @@ function ApplicationDetailModal({
             <p className="text-slate-500 text-xs mt-0.5">Postuló el {formatDate(app.createdAt)}</p>
           </div>
           <div className="flex items-center gap-2">
+            {app.isDuplicate && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-amber-500/15 text-amber-400 border-amber-500/20">
+                Duplicado
+              </span>
+            )}
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${CATEGORY_STYLE[app.category]}`}>
               {CATEGORY_LABEL[app.category]}
             </span>
@@ -96,6 +135,17 @@ function ApplicationDetailModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          {app.category === 'descartado' && app.discardReason && (
+            <div className="mb-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+              <p className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-0.5">Motivo del descarte</p>
+              <p className="text-slate-200 text-sm">{app.discardReason}</p>
+            </div>
+          )}
+          {app.isDuplicate && (
+            <div className="mb-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-2.5">
+              <p className="text-amber-400 text-sm">⚠️ Este carnet (CI) ya había postulado antes.</p>
+            </div>
+          )}
           <Row label="Teléfono" value={app.phone} />
           <Row label="Carnet (CI)" value={app.idCard} />
           <Row label="Sexo" value={SEX_LABEL[app.sex]} />
@@ -142,6 +192,7 @@ export default function ApplicationsPage() {
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | Category>('all');
+  const [period, setPeriod] = useState<Period>('all');
   const [selected, setSelected] = useState<Application | null>(null);
 
   const load = useCallback(async () => {
@@ -149,13 +200,15 @@ export default function ApplicationsPage() {
     setLoading(true);
     const params = new URLSearchParams({ limit: '100' });
     if (filter !== 'all') params.set('category', filter);
+    const range = periodToRange(period);
+    if (range) { params.set('from', range.from); params.set('to', range.to); }
     const res = await apiFetch(token, `/job-applications?${params.toString()}`);
     if (res.ok) {
       const json = await res.json();
       setApps(json.data ?? []);
     }
     setLoading(false);
-  }, [token, filter]);
+  }, [token, filter, period]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -176,11 +229,18 @@ export default function ApplicationsPage() {
       <div className="px-6 py-4 border-b border-slate-700/50 shrink-0">
         <h1 className="text-white font-black text-2xl">Postulaciones</h1>
         <p className="text-slate-500 text-sm">Candidatos del formulario de contratación</p>
-        <div className="flex gap-2 mt-3">
+        <div className="flex flex-wrap items-center gap-2 mt-3">
           {FILTERS.map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${filter === f.key ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>
               {f.label}
+            </button>
+          ))}
+          <span className="text-slate-600 mx-1">|</span>
+          {PERIOD_LABELS.map(p => (
+            <button key={p.key} onClick={() => setPeriod(p.key)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.key ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>
+              {p.label}
             </button>
           ))}
         </div>
@@ -198,10 +258,20 @@ export default function ApplicationsPage() {
               <button key={app.id} onClick={() => setSelected(app)}
                 className="w-full text-left bg-slate-800 hover:bg-slate-700/70 border border-slate-700/50 rounded-xl px-4 py-3 flex items-center justify-between gap-3 transition">
                 <div className="min-w-0">
-                  <p className="text-white text-sm font-semibold truncate">{app.firstName} {app.lastName}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white text-sm font-semibold truncate">{app.firstName} {app.lastName}</p>
+                    {app.isDuplicate && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20 shrink-0">
+                        Duplicado
+                      </span>
+                    )}
+                  </div>
                   <p className="text-slate-400 text-xs truncate">
                     {app.age} años · {SEX_LABEL[app.sex]} · {app.phone}
                   </p>
+                  {app.category === 'descartado' && app.discardReason && (
+                    <p className="text-red-400/80 text-xs truncate mt-0.5">✕ {app.discardReason}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {app.status !== 'new' && (
