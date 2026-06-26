@@ -11,6 +11,7 @@ import OrganizationsAdminPage from '../pages/OrganizationsAdminPage';
 import ReportsPage from '../pages/ReportsPage';
 import QrPaymentPage from '../pages/QrPaymentPage';
 import CustomersPage from '../pages/CustomersPage';
+import ApplicationsPage from '../pages/ApplicationsPage';
 import { useAuth } from '../context/AuthContext';
 
 const pages: Record<string, ReactElement> = {
@@ -21,6 +22,7 @@ const pages: Record<string, ReactElement> = {
   categories:    <CategoriesPage />,
   reports:       <ReportsPage />,
   customers:     <CustomersPage />,
+  applications:  <ApplicationsPage />,
   qrpayment:     <QrPaymentPage />,
   settings:      <SettingsPage />,
   subscriptions:  <SubscriptionsPage />,

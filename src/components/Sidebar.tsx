@@ -17,6 +17,7 @@ const allMenuItems: { id: string; icon: string; label: string; permission: strin
   { id: 'categories',    icon: '🗂️', label: 'Categorías',    permission: 'products:manage', offlineSupported: false },
   { id: 'customers',     icon: '👥', label: 'Clientes',       permission: 'customers:view',  offlineSupported: false },
   { id: 'reports',       icon: '📊', label: 'Reportes',       permission: 'reports:view',    offlineSupported: false },
+  { id: 'applications',  icon: '🧑‍🍳', label: 'Postulaciones',  permission: 'org:manage',      offlineSupported: false },
   { id: 'settings',      icon: '⚙️', label: 'Configuración', permission: 'org:manage',      offlineSupported: true  },
 ];
 
