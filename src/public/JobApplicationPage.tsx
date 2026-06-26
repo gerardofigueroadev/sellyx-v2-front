@@ -65,19 +65,30 @@ export default function JobApplicationPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  // Validación mínima antes de habilitar el envío.
+  // ── Validación por campo (numéricos puros) ──────────────────────────────────
+  const ageNum = Number(form.age);
+  const ageErr =
+    form.age === '' ? '' : ageNum < 14 || ageNum > 99 ? 'La edad debe estar entre 14 y 99 años.' : '';
+  const phoneErr =
+    form.phone === '' ? '' : form.phone.length !== 8 ? 'El teléfono debe tener 8 dígitos.' : '';
+  const idCardErr =
+    form.idCard === '' ? '' : form.idCard.length < 4 ? 'El carnet (CI) no es válido.' : '';
+  const salaryErr =
+    form.salaryExpectation === '' ? '' : Number(form.salaryExpectation) <= 0 ? 'Ingresa un monto válido.' : '';
+
+  // Habilita el envío solo si todo está completo y sin errores.
   const isValid =
-    form.firstName.trim() &&
-    form.lastName.trim() &&
-    form.phone.trim().length >= 5 &&
-    form.idCard.trim() &&
-    form.sex &&
-    Number(form.age) >= 14 &&
+    !!form.firstName.trim() &&
+    !!form.lastName.trim() &&
+    !!form.phone && !phoneErr &&
+    !!form.idCard && !idCardErr &&
+    !!form.sex &&
+    !!form.age && !ageErr &&
     form.fullTimeAvailability !== null &&
-    form.shift &&
+    !!form.shift &&
     form.workedInSimilar !== null &&
-    form.livesAt.trim() &&
-    form.salaryExpectation.trim() &&
+    !!form.livesAt.trim() &&
+    !!form.salaryExpectation && !salaryErr &&
     form.weekendAvailability !== null;
 
   const submit = async () => {
@@ -156,16 +167,19 @@ export default function JobApplicationPage() {
             </Field>
           </div>
 
-          <Field label="Número de teléfono">
-            <Text value={form.phone} onChange={(v) => set('phone', v)} placeholder="Ej: 78590523" type="tel" />
+          <Field label="Número de teléfono" error={phoneErr}>
+            <Text value={form.phone} onChange={(v) => set('phone', v.replace(/\D/g, '').slice(0, 8))}
+              placeholder="Ej: 78590523" type="tel" inputMode="numeric" invalid={!!phoneErr} />
           </Field>
 
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Carnet (CI)">
-              <Text value={form.idCard} onChange={(v) => set('idCard', v)} placeholder="1234567" />
+            <Field label="Carnet (CI)" error={idCardErr}>
+              <Text value={form.idCard} onChange={(v) => set('idCard', v.replace(/\D/g, '').slice(0, 12))}
+                placeholder="1234567" type="tel" inputMode="numeric" invalid={!!idCardErr} />
             </Field>
-            <Field label="Edad">
-              <Text value={form.age} onChange={(v) => set('age', v.replace(/\D/g, ''))} placeholder="22" type="tel" />
+            <Field label="Edad" error={ageErr}>
+              <Text value={form.age} onChange={(v) => set('age', v.replace(/\D/g, '').slice(0, 2))}
+                placeholder="22" type="tel" inputMode="numeric" invalid={!!ageErr} />
             </Field>
           </div>
 
@@ -219,8 +233,9 @@ export default function JobApplicationPage() {
             />
           </Field>
 
-          <Field label="Pretensión salarial">
-            <Text value={form.salaryExpectation} onChange={(v) => set('salaryExpectation', v)} placeholder="Ej: 2500 Bs." />
+          <Field label="Pretensión salarial (Bs.)" error={salaryErr}>
+            <Text value={form.salaryExpectation} onChange={(v) => set('salaryExpectation', v.replace(/\D/g, '').slice(0, 5))}
+              placeholder="Ej: 2500" type="tel" inputMode="numeric" invalid={!!salaryErr} />
           </Field>
 
           {submitErr && <p className="text-red-400 text-xs">{submitErr}</p>}
@@ -268,25 +283,28 @@ function Spinner({ small }: { small?: boolean }) {
   return <span className={`inline-block ${size} border-emerald-500 border-t-transparent rounded-full animate-spin`} />;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <div>
       <label className="block text-white text-sm font-medium mb-1.5">{label}</label>
       {children}
+      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
     </div>
   );
 }
 
-function Text({ value, onChange, placeholder, type = 'text' }: {
+function Text({ value, onChange, placeholder, type = 'text', inputMode, invalid }: {
   value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+  inputMode?: 'numeric' | 'text' | 'tel'; invalid?: boolean;
 }) {
   return (
     <input
       type={type}
+      inputMode={inputMode}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      className={`w-full bg-slate-700/60 border rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 ${invalid ? 'border-red-500 focus:ring-red-500' : 'border-slate-600 focus:ring-emerald-500'}`}
     />
   );
 }
