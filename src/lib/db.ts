@@ -82,6 +82,29 @@ export async function saveOrderToOutbox(localId: string, payload: object): Promi
   );
 }
 
+/**
+ * Siguiente ticketNumber por TURNO, calculado localmente (la PC es la fuente
+ * de la verdad). Cuenta cuántas órdenes del outbox pertenecen a este shiftId
+ * (el shiftId va dentro del payload JSON) y devuelve max+1. Reinicia en cada
+ * turno porque cada turno tiene su propio shiftId. Funciona offline.
+ */
+export async function getNextTicketNumberForShift(shiftId: number): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<{ payload: string }[]>(
+    `SELECT payload FROM orders_outbox
+      WHERE json_extract(payload, '$.shiftId') = ?`,
+    [shiftId],
+  );
+  let max = 0;
+  for (const r of rows) {
+    try {
+      const tn = JSON.parse(r.payload)?.ticketNumber;
+      if (typeof tn === 'number' && tn > max) max = tn;
+    } catch { /* payload corrupto, ignorar */ }
+  }
+  return max + 1;
+}
+
 export async function getPendingOrders(): Promise<OutboxOrder[]> {
   const db = await getDb();
   return db.select<OutboxOrder[]>(

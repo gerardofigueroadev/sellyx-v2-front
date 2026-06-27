@@ -6,7 +6,7 @@ import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
-import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally } from '../lib/db';
+import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
 import { startSyncService, stopSyncService, requestImmediateSync } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
@@ -90,7 +90,9 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
           localId: o.local_id,
           isLocal: isUnsynced,
           orderNumber: o.local_id.slice(0, 8).toUpperCase(),
-          ticketNumber: o.local_id.slice(0, 4).toUpperCase(),
+          // El ticketNumber real lo generó la PC y está en el payload. Solo si
+          // faltara (órdenes viejas pre-cambio) caemos al sufijo del localId.
+          ticketNumber: payload.ticketNumber ?? o.local_id.slice(0, 4).toUpperCase(),
           createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
           items: (payload.items ?? []).map((it: any) => {
             const product = products.find(p => p.id === it.productId);
@@ -832,10 +834,31 @@ export default function HomePage() {
     const total = itemsSnapshot.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
     const clientCreatedAt = new Date().toISOString();
 
+    // ── ticketNumber generado AQUÍ (la PC es la fuente de la verdad) ────────
+    // Correlativo por turno desde el outbox local. Este MISMO número se imprime
+    // y se envía al backend, que lo respeta tal cual. Así el ticket impreso
+    // coincide siempre con el de la nube, incluso offline.
+    let ticketNumber: number;
+    if (tauri) {
+      ticketNumber = await getNextTicketNumberForShift(activeShift.id).catch(() => {
+        // Fallback si SQLite falla: contador en localStorage por turno
+        const k = `ticket_shift_${activeShift.id}`;
+        const n = parseInt(localStorage.getItem(k) ?? '0') + 1;
+        localStorage.setItem(k, String(n));
+        return n;
+      });
+    } else {
+      // Web sin Tauri (sin outbox): contador por turno en localStorage
+      const k = `ticket_shift_${activeShift.id}`;
+      ticketNumber = parseInt(localStorage.getItem(k) ?? '0') + 1;
+      localStorage.setItem(k, String(ticketNumber));
+    }
+
     const buildPayload = (resolvedCustomerId: number | null) => ({
       localId,
       clientCreatedAt,
       shiftId: activeShift.id,
+      ticketNumber,
       channel: 'pos',
       paymentMethod,
       orderType,
@@ -864,14 +887,8 @@ export default function HomePage() {
       });
     }
 
-    // Ticket optimista: número provisional hasta que el server responda.
-    // Si ya estamos online, el ticket real lo verá en /orders cuando el sync
-    // termine; si offline, este es el ticket definitivo del print.
-    const provisionalTicketNum = parseInt(localStorage.getItem('last_offline_ticket') ?? '0') + 1;
-    localStorage.setItem('last_offline_ticket', String(provisionalTicketNum));
-
     const ticketData: OrderTicketData = {
-      ticketNumber:  provisionalTicketNum,
+      ticketNumber,
       orderNumber:   `LOCAL-${localId.slice(0, 8).toUpperCase()}`,
       paymentMethod,
       items: itemsSnapshot.map(i => ({
