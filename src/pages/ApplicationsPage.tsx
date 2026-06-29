@@ -14,7 +14,7 @@ type Category = 'apto' | 'descartado';
 type Status = 'new' | 'reviewed' | 'discarded';
 type Sex = 'male' | 'female';
 type Shift = 'morning' | 'night';
-type NightTransport = 'own' | 'someone' | 'none';
+type NightTransport = 'own' | 'someone' | 'yango';
 
 interface Application {
   id: number;
@@ -83,7 +83,7 @@ const STATUS_LABEL: Record<Status, string> = { new: 'Nuevo', reviewed: 'Revisado
 const SEX_LABEL: Record<Sex, string> = { male: 'Masculino', female: 'Femenino' };
 const SHIFT_LABEL: Record<Shift, string> = { morning: 'Mañana', night: 'Noche' };
 const NIGHT_TRANSPORT_LABEL: Record<NightTransport, string> = {
-  own: 'Transporte propio', someone: 'Alguien lo transporta', none: 'No tiene transporte',
+  own: 'Transporte propio', someone: 'Alguien lo transporta', yango: 'Pide Yango',
 };
 const yesNo = (b: boolean) => (b ? 'Sí' : 'No');
 

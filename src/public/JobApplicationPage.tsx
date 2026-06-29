@@ -8,7 +8,7 @@ interface Ctx { orgName: string }
 type Sex = 'male' | 'female';
 type Shift = 'morning' | 'night';
 // Solo aplica si el turno es noche: cómo se transporta el postulante.
-type NightTransport = 'own' | 'someone' | 'none';
+type NightTransport = 'own' | 'someone' | 'yango';
 
 interface FormState {
   firstName: string;
@@ -219,7 +219,7 @@ export default function JobApplicationPage() {
               <Choice
                 value={form.nightTransport}
                 onChange={(v) => set('nightTransport', v as NightTransport)}
-                options={[['own', '🛵 Transporte propio'], ['someone', '🧍 Alguien lo transporta'], ['none', '🚫 No tiene transporte']]}
+                options={[['own', '🛵 Transporte propio'], ['someone', '🧍 Alguien lo transporta'], ['yango', '🚕 Pide Yango']]}
               />
             </Field>
           )}
