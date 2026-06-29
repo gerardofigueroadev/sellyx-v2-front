@@ -7,6 +7,8 @@ const API = `${API_URL}/api`;
 interface Ctx { orgName: string }
 type Sex = 'male' | 'female';
 type Shift = 'morning' | 'night';
+// Solo aplica si el turno es noche: cómo se transporta el postulante.
+type NightTransport = 'own' | 'someone';
 
 interface FormState {
   firstName: string;
@@ -17,6 +19,7 @@ interface FormState {
   age: string;
   fullTimeAvailability: boolean | null;
   shift: Shift | '';
+  nightTransport: NightTransport | '';
   workedInSimilar: boolean | null;
   previousWorkplace: string;
   previousDuration: string;
@@ -28,7 +31,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   firstName: '', lastName: '', phone: '', idCard: '', sex: '', age: '',
-  fullTimeAvailability: null, shift: '', workedInSimilar: null,
+  fullTimeAvailability: null, shift: '', nightTransport: '', workedInSimilar: null,
   previousWorkplace: '', previousDuration: '', livesAt: '',
   salaryExpectation: '', availableFrom: '', weekendAvailability: null,
 };
@@ -86,6 +89,7 @@ export default function JobApplicationPage() {
     !!form.age && !ageErr &&
     form.fullTimeAvailability !== null &&
     !!form.shift &&
+    (form.shift !== 'night' || !!form.nightTransport) &&
     form.workedInSimilar !== null &&
     !!form.livesAt.trim() &&
     !!form.salaryExpectation && !salaryErr &&
@@ -108,6 +112,7 @@ export default function JobApplicationPage() {
           age: Number(form.age),
           fullTimeAvailability: form.fullTimeAvailability,
           shift: form.shift,
+          nightTransport: form.shift === 'night' ? form.nightTransport : undefined,
           workedInSimilar: form.workedInSimilar,
           previousWorkplace: form.previousWorkplace.trim() || undefined,
           previousDuration: form.previousDuration.trim() || undefined,
@@ -198,10 +203,26 @@ export default function JobApplicationPage() {
           <Field label="Turno preferido">
             <Choice
               value={form.shift}
-              onChange={(v) => set('shift', v as Shift)}
+              onChange={(v) => setForm((f) => ({
+                ...f,
+                shift: v as Shift,
+                // Al cambiar de noche a mañana, limpiar la respuesta de transporte.
+                nightTransport: v === 'night' ? f.nightTransport : '',
+              }))}
               options={[['morning', '🌅 Mañana'], ['night', '🌙 Noche']]}
             />
           </Field>
+
+          {/* Solo para turno noche: cómo se transporta. */}
+          {form.shift === 'night' && (
+            <Field label="Para el turno noche, ¿cómo se transporta?">
+              <Choice
+                value={form.nightTransport}
+                onChange={(v) => set('nightTransport', v as NightTransport)}
+                options={[['own', '🛵 Transporte propio'], ['someone', '🧍 Alguien lo transporta']]}
+              />
+            </Field>
+          )}
 
           <Field label="¿Disponible fines de semana y feriados?">
             <YesNo value={form.weekendAvailability} onChange={(v) => set('weekendAvailability', v)} />
@@ -233,9 +254,9 @@ export default function JobApplicationPage() {
             />
           </Field>
 
-          <Field label="Pretensión salarial (Bs.)" error={salaryErr}>
+          <Field label="Pretensión salarial por día (Bs.)" error={salaryErr}>
             <Text value={form.salaryExpectation} onChange={(v) => set('salaryExpectation', v.replace(/\D/g, '').slice(0, 5))}
-              placeholder="Ej: 2500" type="tel" inputMode="numeric" invalid={!!salaryErr} />
+              type="tel" inputMode="numeric" invalid={!!salaryErr} />
           </Field>
 
           {submitErr && <p className="text-red-400 text-xs">{submitErr}</p>}

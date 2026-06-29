@@ -14,6 +14,7 @@ type Category = 'apto' | 'descartado';
 type Status = 'new' | 'reviewed' | 'discarded';
 type Sex = 'male' | 'female';
 type Shift = 'morning' | 'night';
+type NightTransport = 'own' | 'someone';
 
 interface Application {
   id: number;
@@ -25,6 +26,7 @@ interface Application {
   age: number;
   fullTimeAvailability: boolean;
   shift: Shift;
+  nightTransport: NightTransport | null;
   workedInSimilar: boolean;
   previousWorkplace: string | null;
   previousDuration: string | null;
@@ -80,6 +82,9 @@ const CATEGORY_STYLE: Record<Category, string> = {
 const STATUS_LABEL: Record<Status, string> = { new: 'Nuevo', reviewed: 'Revisado', discarded: 'Descartado' };
 const SEX_LABEL: Record<Sex, string> = { male: 'Masculino', female: 'Femenino' };
 const SHIFT_LABEL: Record<Shift, string> = { morning: 'Mañana', night: 'Noche' };
+const NIGHT_TRANSPORT_LABEL: Record<NightTransport, string> = {
+  own: 'Transporte propio', someone: 'Alguien lo transporta',
+};
 const yesNo = (b: boolean) => (b ? 'Sí' : 'No');
 
 function formatDate(dateStr: string) {
@@ -152,12 +157,15 @@ function ApplicationDetailModal({
           <Row label="Edad" value={`${app.age} años`} />
           <Row label="Disponibilidad de tiempo" value={yesNo(app.fullTimeAvailability)} />
           <Row label="Turno preferido" value={SHIFT_LABEL[app.shift]} />
+          {app.shift === 'night' && (
+            <Row label="Transporte (turno noche)" value={app.nightTransport ? NIGHT_TRANSPORT_LABEL[app.nightTransport] : '—'} />
+          )}
           <Row label="Fines de semana / feriados" value={yesNo(app.weekendAvailability)} />
           <Row label="Trabajó en hamburguesería/pollería" value={yesNo(app.workedInSimilar)} />
           <Row label="Dónde trabajó antes" value={app.previousWorkplace || '—'} />
           <Row label="Tiempo en anterior trabajo" value={app.previousDuration || '—'} />
           <Row label="Puede empezar desde" value={app.availableFrom || '—'} />
-          <Row label="Pretensión salarial" value={app.salaryExpectation} />
+          <Row label="Pretensión salarial (por día)" value={`${app.salaryExpectation} Bs.`} />
           <Row label="Por dónde vive" value={app.livesAt} />
         </div>
 
