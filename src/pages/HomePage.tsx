@@ -780,13 +780,15 @@ export default function HomePage() {
     // primer intento (cancelPending=false); si el cajero ya aceptó cancelar, no.
     if (!cancelPending) {
       try {
+        // Drena mientras haya progreso (aguanta internet lento sin falsos
+        // positivos). Solo devuelve remaining>0 si de verdad no pudo subir.
         const { remaining } = await drainBeforeShiftClose(getValidToken, API);
         if (remaining > 0) {
-          // Quedaron ventas sin sincronizar (sin red o red muy lenta). No
+          // No se pudo subir todo (sin red o conexión rota, no solo lenta). No
           // cerramos a ciegas: avisamos para que reintente y no se pierdan
           // ventas cobradas. El estado local ya está a salvo en SQLite.
           const msg = navigator.onLine
-            ? `Hay ${remaining} venta(s) sin sincronizar. Espera unos segundos y vuelve a cerrar la caja.`
+            ? `No se pudieron subir ${remaining} venta(s) al servidor. Revisa tu internet e intenta cerrar la caja de nuevo.`
             : `Sin conexión: hay ${remaining} venta(s) sin subir. Conéctate a internet antes de cerrar la caja.`;
           toast.error(msg);
           requestImmediateSync();

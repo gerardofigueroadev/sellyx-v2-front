@@ -192,49 +192,55 @@ async function countUnsynced(): Promise<number> {
 /**
  * Drena la cola ANTES de cerrar caja: crea las órdenes pendientes en el server
  * y envía TODOS los "Listo" (complete) que aún no replicaron. Devuelve cuántos
- * items quedan sin sincronizar (creaciones + completes). Si devuelve 0, es
- * seguro cerrar caja sin que el backend cancele ventas ya cobradas.
+ * items quedan sin sincronizar. Si devuelve 0, es seguro cerrar caja sin que el
+ * backend cancele ventas ya cobradas.
  *
- * Garantías de rapidez (el cierre de caja NUNCA se cuelga):
- *  - Si no hay nada pendiente en local, retorna al instante (no toca red).
- *  - Si no hay internet, retorna al instante con el conteo pendiente.
- *  - Tope global `budgetMs`: si el drenaje no termina en ese tiempo, corta y
- *    devuelve lo que quede (el cajero verá el aviso y reintentará).
+ * IMPORTANTE — sin falsos positivos con internet lento:
+ * NO cortamos por reloj. Mientras haya PROGRESO (el contador de pendientes baja
+ * en cada vuelta), seguimos esperando aunque la red esté lenta — cada request
+ * ya tiene su propio timeout de 15s, así que "lento pero funciona" termina bien.
+ * Solo nos rendimos cuando pasan `maxStalls` vueltas SEGUIDAS sin que baje ni un
+ * pendiente (eso sí es conexión rota, no lenta). Ahí avisamos y el cajero
+ * reintenta — nada se pierde: el estado ya está a salvo en SQLite local.
  *
- * Reintenta el ciclo hasta `maxRounds` porque un complete depende de que su
- * creación haya obtenido server_id primero (dos pasos, dos vueltas).
+ * Reintenta también porque un complete depende de que su creación haya obtenido
+ * server_id primero (dos pasos, a veces dos vueltas).
  */
 export async function drainBeforeShiftClose(
   getToken: () => Promise<string | null>,
   apiBase: string,
-  maxRounds = 4,
-  budgetMs = 12_000,
-): Promise<{ remaining: number; timedOut: boolean }> {
-  if (!isTauri()) return { remaining: 0, timedOut: false }; // web sin outbox: nada que drenar
+  maxStalls = 3,
+): Promise<{ remaining: number; stalled: boolean }> {
+  if (!isTauri()) return { remaining: 0, stalled: false }; // web sin outbox: nada que drenar
 
   // Atajo instantáneo: si no hay nada pendiente, cerrar de una (caso normal).
-  const initial = await countUnsynced();
-  if (initial === 0) return { remaining: 0, timedOut: false };
+  let remaining = await countUnsynced();
+  if (remaining === 0) return { remaining: 0, stalled: false };
 
-  // Sin red: no intentamos nada (evita esperar timeouts). Avisar y salir ya.
-  if (!navigator.onLine) return { remaining: initial, timedOut: false };
+  // Sin red declarada por el SO: no intentamos (evita esperas inútiles).
+  if (!navigator.onLine) return { remaining, stalled: false };
 
-  const deadline = Date.now() + budgetMs;
   const tauri = true;
+  let stalls = 0;
 
-  for (let round = 0; round < maxRounds; round++) {
+  // Sin límite de vueltas por tiempo: el freno es la falta de progreso.
+  // Con progreso continuo, esto avanza hasta vaciar la cola por lenta que esté.
+  while (remaining > 0 && stalls < maxStalls) {
     await syncPendingOrders(getToken, apiBase).catch(() => {});
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
 
-    if (await countUnsynced() === 0) return { remaining: 0, timedOut: false };
+    const after = await countUnsynced();
+    if (after === 0) return { remaining: 0, stalled: false };
 
-    // Si se acabó el presupuesto de tiempo, no arrancar otra vuelta.
-    if (Date.now() >= deadline) {
-      return { remaining: await countUnsynced(), timedOut: true };
-    }
+    // ¿Progresó? (bajó al menos 1). Si sí, reseteamos el contador de estancamiento.
+    if (after < remaining) stalls = 0;
+    else stalls++;
+
+    remaining = after;
   }
 
-  return { remaining: await countUnsynced(), timedOut: false };
+  // Se estancó: varias vueltas sin bajar ni un pendiente → conexión rota, no lenta.
+  return { remaining, stalled: stalls >= maxStalls };
 }
 
 export function startSyncService(
