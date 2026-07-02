@@ -182,11 +182,24 @@ export async function syncPendingSettings(
   } catch { /* mantener para próximo intento */ }
 }
 
+/** Suma de pendientes locales: ventas sin crear + "Listo" sin replicar. */
+async function countUnsynced(): Promise<number> {
+  const create = await getPendingCount().catch(() => 0);
+  const done = await getKitchenCompletedPendingCount().catch(() => 0);
+  return create + done;
+}
+
 /**
  * Drena la cola ANTES de cerrar caja: crea las órdenes pendientes en el server
  * y envía TODOS los "Listo" (complete) que aún no replicaron. Devuelve cuántos
  * items quedan sin sincronizar (creaciones + completes). Si devuelve 0, es
  * seguro cerrar caja sin que el backend cancele ventas ya cobradas.
+ *
+ * Garantías de rapidez (el cierre de caja NUNCA se cuelga):
+ *  - Si no hay nada pendiente en local, retorna al instante (no toca red).
+ *  - Si no hay internet, retorna al instante con el conteo pendiente.
+ *  - Tope global `budgetMs`: si el drenaje no termina en ese tiempo, corta y
+ *    devuelve lo que quede (el cajero verá el aviso y reintentará).
  *
  * Reintenta el ciclo hasta `maxRounds` porque un complete depende de que su
  * creación haya obtenido server_id primero (dos pasos, dos vueltas).
@@ -195,28 +208,33 @@ export async function drainBeforeShiftClose(
   getToken: () => Promise<string | null>,
   apiBase: string,
   maxRounds = 4,
-): Promise<{ remaining: number }> {
-  if (!isTauri()) return { remaining: 0 }; // web sin outbox: nada que drenar
-  if (!navigator.onLine) {
-    // Offline: no podemos drenar. Reportar lo que quedaría pendiente.
-    const create = await getPendingCount().catch(() => 0);
-    const done = await getKitchenCompletedPendingCount().catch(() => 0);
-    return { remaining: create + done };
-  }
+  budgetMs = 12_000,
+): Promise<{ remaining: number; timedOut: boolean }> {
+  if (!isTauri()) return { remaining: 0, timedOut: false }; // web sin outbox: nada que drenar
 
+  // Atajo instantáneo: si no hay nada pendiente, cerrar de una (caso normal).
+  const initial = await countUnsynced();
+  if (initial === 0) return { remaining: 0, timedOut: false };
+
+  // Sin red: no intentamos nada (evita esperar timeouts). Avisar y salir ya.
+  if (!navigator.onLine) return { remaining: initial, timedOut: false };
+
+  const deadline = Date.now() + budgetMs;
   const tauri = true;
+
   for (let round = 0; round < maxRounds; round++) {
     await syncPendingOrders(getToken, apiBase).catch(() => {});
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
 
-    const create = await getPendingCount().catch(() => 0);
-    const done = await getKitchenCompletedPendingCount().catch(() => 0);
-    if (create + done === 0) return { remaining: 0 };
+    if (await countUnsynced() === 0) return { remaining: 0, timedOut: false };
+
+    // Si se acabó el presupuesto de tiempo, no arrancar otra vuelta.
+    if (Date.now() >= deadline) {
+      return { remaining: await countUnsynced(), timedOut: true };
+    }
   }
 
-  const create = await getPendingCount().catch(() => 0);
-  const done = await getKitchenCompletedPendingCount().catch(() => 0);
-  return { remaining: create + done };
+  return { remaining: await countUnsynced(), timedOut: false };
 }
 
 export function startSyncService(

@@ -782,11 +782,13 @@ export default function HomePage() {
       try {
         const { remaining } = await drainBeforeShiftClose(getValidToken, API);
         if (remaining > 0) {
-          // Quedaron ventas sin sincronizar (red inestable). No cerramos a
-          // ciegas: avisamos para que reintente y no se pierdan ventas cobradas.
-          toast.error(
-            `Hay ${remaining} venta(s) sin sincronizar. Espera unos segundos y vuelve a cerrar la caja.`,
-          );
+          // Quedaron ventas sin sincronizar (sin red o red muy lenta). No
+          // cerramos a ciegas: avisamos para que reintente y no se pierdan
+          // ventas cobradas. El estado local ya está a salvo en SQLite.
+          const msg = navigator.onLine
+            ? `Hay ${remaining} venta(s) sin sincronizar. Espera unos segundos y vuelve a cerrar la caja.`
+            : `Sin conexión: hay ${remaining} venta(s) sin subir. Conéctate a internet antes de cerrar la caja.`;
+          toast.error(msg);
           requestImmediateSync();
           setShiftLoading(false);
           return;
