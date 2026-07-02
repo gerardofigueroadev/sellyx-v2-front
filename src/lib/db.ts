@@ -192,6 +192,21 @@ export async function getKitchenCompletedToSync(): Promise<OutboxOrder[]> {
   );
 }
 
+/**
+ * Cuenta los "Listo" marcados localmente que aún NO se replicaron al servidor.
+ * A diferencia de getKitchenCompletedToSync, NO exige server_id: una orden con
+ * kitchen_status='completed' pero synced=0 (su creación aún no subió) también
+ * cuenta como pendiente — cerrar caja con ella la dejaría 'pending' en la nube.
+ */
+export async function getKitchenCompletedPendingCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<[{ count: number }]>(
+    `SELECT COUNT(*) as count FROM orders_outbox
+      WHERE kitchen_status = 'completed' AND kitchen_synced = 0`,
+  );
+  return rows[0]?.count ?? 0;
+}
+
 /** Marca el complete como sincronizado con el servidor (PATCH confirmado). */
 export async function markKitchenCompleteSynced(localId: string): Promise<void> {
   const db = await getDb();

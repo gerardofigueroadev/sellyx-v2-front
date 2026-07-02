@@ -1,6 +1,6 @@
 import {
   getPendingOrders, markOrderSynced, incrementRetry, getPendingCount,
-  getKitchenCompletedToSync, markKitchenCompleteSynced,
+  getKitchenCompletedToSync, markKitchenCompleteSynced, getKitchenCompletedPendingCount,
 } from './db';
 import { isTauri } from './isTauri';
 
@@ -180,6 +180,43 @@ export async function syncPendingSettings(
     });
     if (res.ok) localStorage.removeItem('pos_pending_settings_patch');
   } catch { /* mantener para próximo intento */ }
+}
+
+/**
+ * Drena la cola ANTES de cerrar caja: crea las órdenes pendientes en el server
+ * y envía TODOS los "Listo" (complete) que aún no replicaron. Devuelve cuántos
+ * items quedan sin sincronizar (creaciones + completes). Si devuelve 0, es
+ * seguro cerrar caja sin que el backend cancele ventas ya cobradas.
+ *
+ * Reintenta el ciclo hasta `maxRounds` porque un complete depende de que su
+ * creación haya obtenido server_id primero (dos pasos, dos vueltas).
+ */
+export async function drainBeforeShiftClose(
+  getToken: () => Promise<string | null>,
+  apiBase: string,
+  maxRounds = 4,
+): Promise<{ remaining: number }> {
+  if (!isTauri()) return { remaining: 0 }; // web sin outbox: nada que drenar
+  if (!navigator.onLine) {
+    // Offline: no podemos drenar. Reportar lo que quedaría pendiente.
+    const create = await getPendingCount().catch(() => 0);
+    const done = await getKitchenCompletedPendingCount().catch(() => 0);
+    return { remaining: create + done };
+  }
+
+  const tauri = true;
+  for (let round = 0; round < maxRounds; round++) {
+    await syncPendingOrders(getToken, apiBase).catch(() => {});
+    await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
+
+    const create = await getPendingCount().catch(() => 0);
+    const done = await getKitchenCompletedPendingCount().catch(() => 0);
+    if (create + done === 0) return { remaining: 0 };
+  }
+
+  const create = await getPendingCount().catch(() => 0);
+  const done = await getKitchenCompletedPendingCount().catch(() => 0);
+  return { remaining: create + done };
 }
 
 export function startSyncService(

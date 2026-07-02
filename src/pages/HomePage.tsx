@@ -7,7 +7,7 @@ import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
 import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
-import { startSyncService, stopSyncService, requestImmediateSync } from '../lib/syncService';
+import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
 
@@ -772,6 +772,29 @@ export default function HomePage() {
       setShiftLoading(false);
       toast.warning('Caja cerrada sin conexión — se sincronizará cuando vuelva el internet');
       return;
+    }
+
+    // CRÍTICO: antes de cerrar, subir al server las ventas creadas y TODOS los
+    // "Listo" que aún estén solo en local. Si no, el backend las ve 'pending' y
+    // las cancela al cerrar (bug: se perdían ventas ya cobradas). Solo en el
+    // primer intento (cancelPending=false); si el cajero ya aceptó cancelar, no.
+    if (!cancelPending) {
+      try {
+        const { remaining } = await drainBeforeShiftClose(getValidToken, API);
+        if (remaining > 0) {
+          // Quedaron ventas sin sincronizar (red inestable). No cerramos a
+          // ciegas: avisamos para que reintente y no se pierdan ventas cobradas.
+          toast.error(
+            `Hay ${remaining} venta(s) sin sincronizar. Espera unos segundos y vuelve a cerrar la caja.`,
+          );
+          requestImmediateSync();
+          setShiftLoading(false);
+          return;
+        }
+      } catch {
+        // Si el drenaje falla por completo, seguimos: el backend igual avisará
+        // de pendientes y el cajero decide. No bloqueamos el cierre.
+      }
     }
 
     const res = await apiFetch(token!, `/shifts/${activeShift.id}/close`, {
