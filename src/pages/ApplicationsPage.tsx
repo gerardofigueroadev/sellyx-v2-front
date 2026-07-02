@@ -195,18 +195,24 @@ function ApplicationDetailModal({
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 20;
+
 export default function ApplicationsPage() {
   const { token } = useAuth();
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | Category>('all');
   const [period, setPeriod] = useState<Period>('all');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Application | null>(null);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    const params = new URLSearchParams({ limit: '100' });
+    const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
     if (filter !== 'all') params.set('category', filter);
     const range = periodToRange(period);
     if (range) { params.set('from', range.from); params.set('to', range.to); }
@@ -214,12 +220,20 @@ export default function ApplicationsPage() {
     if (res.ok) {
       const json = await res.json();
       setApps(json.data ?? []);
+      setTotal(json.total ?? 0);
     }
     setLoading(false);
-  }, [token, filter, period]);
+  }, [token, filter, period, page]);
 
   useEffect(() => { load(); }, [load]);
 
+  // Al cambiar de filtro o periodo, volver a la página 1 (evita quedar en una
+  // página que ya no existe para el nuevo conjunto → lista vacía).
+  useEffect(() => { setPage(1); }, [filter, period]);
+
+  // Cambia el estado de una postulación. Si el cambio la saca del filtro activo
+  // (no aplica aquí: no filtramos por status), refrescamos igual para mantener
+  // total/paginación consistentes.
   const handleUpdated = (updated: Application) => {
     setApps(prev => prev.map(a => (a.id === updated.id ? updated : a)));
     setSelected(updated);
@@ -230,6 +244,9 @@ export default function ApplicationsPage() {
     { key: 'apto', label: 'Aptos' },
     { key: 'descartado', label: 'Descartados' },
   ];
+
+  const goPrev = () => setPage(p => Math.max(1, p - 1));
+  const goNext = () => setPage(p => Math.min(totalPages, p + 1));
 
   return (
     <div className="flex-1 flex flex-col bg-slate-900 min-h-0 overflow-hidden">
@@ -259,7 +276,9 @@ export default function ApplicationsPage() {
         {loading ? (
           <p className="text-slate-500 text-sm text-center py-10">Cargando postulaciones…</p>
         ) : apps.length === 0 ? (
-          <p className="text-slate-500 text-sm text-center py-10">No hay postulaciones todavía.</p>
+          <p className="text-slate-500 text-sm text-center py-10">
+            {total === 0 ? 'No hay postulaciones que coincidan con el filtro.' : 'No hay postulaciones en esta página.'}
+          </p>
         ) : (
           <div className="space-y-2 max-w-3xl">
             {apps.map(app => (
@@ -294,6 +313,29 @@ export default function ApplicationsPage() {
           </div>
         )}
       </div>
+
+      {/* Paginación */}
+      {total > 0 && (
+        <div className="shrink-0 border-t border-slate-700/50 px-6 py-3 flex items-center justify-between">
+          <span className="text-slate-500 text-xs">
+            {total} postulación(es) · página {page} de {totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={goPrev}
+              disabled={loading || page <= 1}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition">
+              ← Anterior
+            </button>
+            <button
+              onClick={goNext}
+              disabled={loading || page >= totalPages}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition">
+              Siguiente →
+            </button>
+          </div>
+        </div>
+      )}
 
       {selected && token && (
         <ApplicationDetailModal
