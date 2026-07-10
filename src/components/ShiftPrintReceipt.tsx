@@ -48,7 +48,7 @@ function pad(left: string, right: string, width = 30) {
   return left + ' '.repeat(Math.max(1, gap)) + right;
 }
 
-export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: { data: ShiftReportData; orgName: string; currency?: string }) {
+export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.', hideAmounts = false }: { data: ShiftReportData; orgName: string; currency?: string; hideAmounts?: boolean }) {
   const s = data.shift;
   const cur = currency;
   return (
@@ -90,7 +90,7 @@ export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: {
             <tr>
               <th style={{ textAlign: 'left',  padding: '1px 3px', fontWeight: 'bold', border: '1px solid #000' }}>Producto</th>
               <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'bold', width: '34px', border: '1px solid #000' }}>Cant</th>
-              <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'bold', width: '80px', border: '1px solid #000' }}>Subtotal</th>
+              {!hideAmounts && <th style={{ textAlign: 'right', padding: '1px 3px', fontWeight: 'bold', width: '80px', border: '1px solid #000' }}>Subtotal</th>}
             </tr>
           </thead>
           <tbody>
@@ -98,7 +98,7 @@ export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: {
               <tr key={i}>
                 <td style={{ padding: '0 3px', lineHeight: '1.05', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: '1px solid #000' }}>{p.name}</td>
                 <td style={{ padding: '0 3px', textAlign: 'right', lineHeight: '1.05', border: '1px solid #000' }}>{p.totalQty}</td>
-                <td style={{ padding: '0 3px', textAlign: 'right', whiteSpace: 'nowrap', lineHeight: '1.05', border: '1px solid #000' }}>{cur}{p.totalSubtotal.toFixed(2)}</td>
+                {!hideAmounts && <td style={{ padding: '0 3px', textAlign: 'right', whiteSpace: 'nowrap', lineHeight: '1.05', border: '1px solid #000' }}>{cur}{p.totalSubtotal.toFixed(2)}</td>}
               </tr>
             ))}
           </tbody>
@@ -107,26 +107,31 @@ export default function ShiftPrintReceipt({ data, orgName, currency = 'Bs.' }: {
 
       <div style={{ borderTop: '1px dashed #000', margin: '2px 0' }} />
 
-      {/* Métodos de pago */}
-      <div style={{ fontSize: '12px' }}>
-        <div style={{ marginBottom: '1px' }}>MÉTODOS DE PAGO</div>
-        {data.cashSales     > 0 && <div>{pad('  Efectivo:', `${cur} ${data.cashSales.toFixed(2)}`)}</div>}
-        {data.cardSales     > 0 && <div>{pad('  Tarjeta:', `${cur} ${data.cardSales.toFixed(2)}`)}</div>}
-        {data.qrSales       > 0 && <div>{pad('  QR:', `${cur} ${data.qrSales.toFixed(2)}`)}</div>}
-      </div>
+      {/* Métodos de pago — solo con montos (oculto para cajero) */}
+      {!hideAmounts && (
+        <>
+          <div style={{ fontSize: '12px' }}>
+            <div style={{ marginBottom: '1px' }}>MÉTODOS DE PAGO</div>
+            {data.cashSales     > 0 && <div>{pad('  Efectivo:', `${cur} ${data.cashSales.toFixed(2)}`)}</div>}
+            {data.cardSales     > 0 && <div>{pad('  Tarjeta:', `${cur} ${data.cardSales.toFixed(2)}`)}</div>}
+            {data.qrSales       > 0 && <div>{pad('  QR:', `${cur} ${data.qrSales.toFixed(2)}`)}</div>}
+          </div>
+          <div style={{ borderTop: '1px dashed #000', margin: '2px 0' }} />
+        </>
+      )}
 
-      <div style={{ borderTop: '1px dashed #000', margin: '2px 0' }} />
-
-      {/* Total */}
+      {/* Total pedidos (cantidad) — siempre. TOTAL VENTAS (monto) solo admin. */}
       <div style={{ fontSize: '12px' }}>
         <div>{pad('Total pedidos:', `${data.totalOrders}`)}</div>
-        <div style={{ fontSize: '15px', marginTop: '1px' }}>
-          {pad('TOTAL VENTAS:', `${cur} ${data.totalSales.toFixed(2)}`)}
-        </div>
+        {!hideAmounts && (
+          <div style={{ fontSize: '15px', marginTop: '1px' }}>
+            {pad('TOTAL VENTAS:', `${cur} ${data.totalSales.toFixed(2)}`)}
+          </div>
+        )}
       </div>
 
-      {/* Arqueo */}
-      {s.type === 'pos' && (
+      {/* Arqueo — todo son montos (oculto para cajero) */}
+      {!hideAmounts && s.type === 'pos' && (
         <>
           <div style={{ borderTop: '1px dashed #000', margin: '2px 0' }} />
           <div style={{ fontSize: '12px' }}>

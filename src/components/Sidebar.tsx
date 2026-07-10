@@ -119,13 +119,19 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
   };
 
   const isSuperAdmin = user?.role === 'superadmin';
+  // Cajero = sin acceso a reportes (permiso que distingue admin de cajero).
+  // Al cajero le ocultamos Turnos y Productos aunque tenga sus permisos base.
+  const isCashier = !isSuperAdmin && !hasPermission('reports:view');
+  const HIDDEN_FOR_CASHIER = ['shifts', 'products'];
 
   const menuItems = isSuperAdmin
     ? [
         { id: 'organizations', icon: '🏢', label: 'Organizaciones' },
         { id: 'subscriptions', icon: '💳', label: 'Suscripciones' },
       ]
-    : allMenuItems.filter(item => hasPermission(item.permission));
+    : allMenuItems.filter(item =>
+        hasPermission(item.permission) && !(isCashier && HIDDEN_FOR_CASHIER.includes(item.id)),
+      );
 
   // Subscription dot for avatar button
   const sub = user?.subscription;

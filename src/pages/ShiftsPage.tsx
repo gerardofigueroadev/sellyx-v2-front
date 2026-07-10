@@ -53,7 +53,8 @@ function duration(from: string, to: string | null) {
 }
 
 function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: string; orgName: string }) {
-  const { currency } = useAuth();
+  const { currency, hasPermission } = useAuth();
+  const hideAmounts = !hasPermission('reports:view'); // cajero: solo cantidades
   const [loading,    setLoading]    = useState(false);
   const [reportData, setReportData] = useState<ShiftReport | null>(null);
 
@@ -79,7 +80,7 @@ function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: stri
 
   return (
     <>
-      {reportData && <ShiftPrintReceipt data={reportData} orgName={orgName} currency={currency} />}
+      {reportData && <ShiftPrintReceipt data={reportData} orgName={orgName} currency={currency} hideAmounts={hideAmounts} />}
       <button
         onClick={handlePrint}
         disabled={loading}
@@ -97,7 +98,8 @@ function PrintButton({ shiftId, token, orgName }: { shiftId: number; token: stri
 
 // ─── Summary Modal ────────────────────────────────────────────────────────────
 function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; token: string; orgName: string; onClose: () => void }) {
-  const { currency } = useAuth();
+  const { currency, hasPermission } = useAuth();
+  const hideAmounts = !hasPermission('reports:view'); // cajero: solo cantidades
   const [data, setData] = useState<ShiftSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -143,16 +145,16 @@ function SummaryModal({ shiftId, token, orgName, onClose }: { shiftId: number; t
               </div>
             </div>
 
-            {/* Ventas */}
+            {/* Ventas — montos solo para admin; cajero ve solo cantidad de pedidos */}
             <div className="space-y-2">
               <Row label="Total pedidos" value={`${s.totalOrders} órdenes`} />
-              <Row label="Ventas totales" value={`${currency} ${s.totalSales.toFixed(2)}`} highlight />
-              <Row label="Ventas efectivo" value={`${currency} ${s.cashSales.toFixed(2)}`} />
-              <Row label="Ventas QR / digital" value={`${currency} ${s.digitalSales.toFixed(2)}`} />
+              {!hideAmounts && <Row label="Ventas totales" value={`${currency} ${s.totalSales.toFixed(2)}`} highlight />}
+              {!hideAmounts && <Row label="Ventas efectivo" value={`${currency} ${s.cashSales.toFixed(2)}`} />}
+              {!hideAmounts && <Row label="Ventas QR / digital" value={`${currency} ${s.digitalSales.toFixed(2)}`} />}
             </div>
 
-            {/* Caja */}
-            {s.shift.type === 'pos' && (
+            {/* Caja — todo son montos (oculto para cajero) */}
+            {!hideAmounts && s.shift.type === 'pos' && (
               <div className="border-t border-slate-700/50 pt-3 space-y-2">
                 <Row label="Efectivo inicial" value={`${currency} ${Number(s.shift.openingAmount).toFixed(2)}`} />
                 <Row label="Efectivo esperado" value={`${currency} ${s.expectedCash.toFixed(2)}`} />

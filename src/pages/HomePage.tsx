@@ -360,7 +360,8 @@ function CloseShiftModal({ onConfirm, onClose }: {
   onConfirm: (amount: number, notes: string, cancelPending: boolean) => Promise<void>;
   onClose: () => void;
 }) {
-  const { currency } = useAuth();
+  const { currency, hasPermission } = useAuth();
+  const hideAmounts = !hasPermission('reports:view'); // cajero: solo cantidades
   const [step, setStep]           = useState<'amount' | 'warning'>('amount');
   const [amount, setAmount]       = useState('');
   const [notes, setNotes]         = useState('');
@@ -432,7 +433,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
               <div key={o.ticketNumber} className="flex items-center justify-between bg-slate-700/40 rounded-lg px-3 py-2 text-sm">
                 <span className="text-white font-bold">#{o.ticketNumber}</span>
                 <span className="text-slate-400">{o.itemCount} item(s)</span>
-                <span className="text-amber-400 font-medium">{currency} {Number(o.total).toFixed(2)}</span>
+                {!hideAmounts && <span className="text-amber-400 font-medium">{currency} {Number(o.total).toFixed(2)}</span>}
               </div>
             ))}
           </div>
@@ -1003,7 +1004,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Auto-print on shift close */}
-      {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} currency={currency} />}
+      {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} currency={currency} hideAmounts={!hasPermission('reports:view')} />}
       {/* Impresión de tickets: cliente primero, luego cocina (2 cortes separados) */}
       {printTicket && printPhase === 'client' && (
         <div id="thermal-print-area">
