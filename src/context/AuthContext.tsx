@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import BASE_URL from '../config';
+import { identifyUser, resetAnalytics } from '../lib/analytics';
 
 const API_URL = `${BASE_URL}/api`;
 
@@ -155,6 +156,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveBranchId(data.user?.branch?.id ?? null);
       setBranches([]);
 
+      // Métricas: asociar los eventos a este usuario (rol/org para segmentar).
+      identifyUser(data.user.id, {
+        role: data.user.role,
+        orgId: data.user.organization?.id,
+        orgName: data.user.organization?.name,
+      });
+
       // Load org settings immediately after login
       if (data.user?.organization) {
         try {
@@ -230,6 +238,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveBranchId(null);
     setCurrency('Bs.');
     setEnabledPaymentMethods(DEFAULT_PAYMENT_METHODS);
+    // Métricas: soltar la identidad para no mezclar usuarios en un mismo equipo.
+    resetAnalytics();
   };
 
   const hasPermission = (permission: string) => {
