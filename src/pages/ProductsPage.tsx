@@ -53,10 +53,11 @@ const emptyForm: FormData = { name: '', description: '', price: '', emoji: '🍽
 const EMOJIS = ['🍔','🍕','🌭','🌮','🥪','🍗','🍖','🥩','🍜','🍝','🍛','🥗','🥙','🌯','🥤','🧃','☕','🍵','🧋','💧','🍺','🥛','🍟','🧀','🥚','🍳','🥞','🧇','🍰','🎂','🍩','🍪','🍫','🍦','🧁','🍮','🫙','🥫','🧂'];
 
 // ─── Product Row (compact card en columna) ────────────────────────────────────
-function ProductRow({ product, accent, isAdmin, currency, isFirst, isLast, onMoveUp, onMoveDown, onToggle, onEdit, onDelete }: {
+function ProductRow({ product, accent, isAdmin, canManage, currency, isFirst, isLast, onMoveUp, onMoveDown, onToggle, onEdit, onDelete }: {
   product: Product;
   accent?: string;
   isAdmin: boolean;
+  canManage: boolean;
   currency: string;
   isFirst: boolean;
   isLast: boolean;
@@ -113,24 +114,26 @@ function ProductRow({ product, accent, isAdmin, currency, isFirst, isLast, onMov
         </div>
       </div>
 
-      {/* Acciones */}
-      <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition">
-        {/* Flechas de orden */}
-        <div className="flex flex-col">
-          <button onClick={onMoveUp} disabled={isFirst} title="Subir"
-            className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▲</button>
-          <button onClick={onMoveDown} disabled={isLast} title="Bajar"
-            className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▼</button>
+      {/* Acciones — solo con permiso products:manage. Sin él, solo lectura. */}
+      {canManage && (
+        <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition">
+          {/* Flechas de orden */}
+          <div className="flex flex-col">
+            <button onClick={onMoveUp} disabled={isFirst} title="Subir"
+              className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▲</button>
+            <button onClick={onMoveDown} disabled={isLast} title="Bajar"
+              className="px-1 leading-none text-slate-500 hover:text-white hover:bg-slate-700/50 rounded disabled:opacity-20 disabled:cursor-not-allowed transition text-[10px]">▼</button>
+          </div>
+          <button onClick={onToggle} title={product.isAvailable ? 'Deshabilitar' : 'Habilitar'}
+            className={`p-1 rounded text-xs transition ${product.isAvailable ? 'hover:bg-green-500/15' : 'hover:bg-slate-700'}`}>
+            {product.isAvailable ? '✅' : '⏸️'}
+          </button>
+          <button onClick={onEdit} title="Editar"
+            className="p-1 rounded text-slate-400 hover:text-blue-400 hover:bg-blue-500/15 transition text-xs">✏️</button>
+          <button onClick={onDelete} title="Eliminar"
+            className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/15 transition text-xs">🗑️</button>
         </div>
-        <button onClick={onToggle} title={product.isAvailable ? 'Deshabilitar' : 'Habilitar'}
-          className={`p-1 rounded text-xs transition ${product.isAvailable ? 'hover:bg-green-500/15' : 'hover:bg-slate-700'}`}>
-          {product.isAvailable ? '✅' : '⏸️'}
-        </button>
-        <button onClick={onEdit} title="Editar"
-          className="p-1 rounded text-slate-400 hover:text-blue-400 hover:bg-blue-500/15 transition text-xs">✏️</button>
-        <button onClick={onDelete} title="Eliminar"
-          className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/15 transition text-xs">🗑️</button>
-      </div>
+      )}
     </div>
   );
 }
@@ -273,8 +276,10 @@ function CopyModal({ token, branches, currentBranchId, onClose, onDone }: {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function ProductsPage() {
-  const { token, branches, activeBranchId, currency } = useAuth();
+  const { token, branches, activeBranchId, currency, hasPermission } = useAuth();
   const isAdmin = branches.length > 1;
+  // Sin products:manage → la página es solo lectura (sin crear/editar/eliminar/mover).
+  const canManage = hasPermission('products:manage');
 
   const toast = useToast();
   const [products, setProducts] = useState<Product[]>([]);
@@ -471,8 +476,8 @@ export default function ProductsPage() {
           <p className="text-slate-500 text-sm">{products.length} productos{filterBranchId ? ` en ${branches.find(b => b.id === filterBranchId)?.name ?? 'sucursal'}` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Copy button — only when admin with multiple branches */}
-          {isAdmin && (
+          {/* Acciones de gestión — solo con products:manage */}
+          {canManage && isAdmin && (
             <button
               onClick={() => setShowCopyModal(true)}
               className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-sm font-medium transition"
@@ -480,12 +485,14 @@ export default function ProductsPage() {
               <span>📋</span> Copiar a sucursal
             </button>
           )}
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
-          >
-            <span className="text-lg">+</span> Nuevo producto
-          </button>
+          {canManage && (
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
+            >
+              <span className="text-lg">+</span> Nuevo producto
+            </button>
+          )}
         </div>
       </div>
 
@@ -555,7 +562,9 @@ export default function ProductsPage() {
             <p className="text-5xl mb-3">📦</p>
             <p className="text-slate-400 text-lg font-medium">No hay productos</p>
             <p className="text-slate-600 text-sm mt-1">
-              {isAdmin ? 'Crea uno con "Nuevo producto" o usa "Copiar a sucursal"' : 'Crea el primero con el botón "Nuevo producto"'}
+              {!canManage
+                ? 'Aún no hay productos registrados'
+                : isAdmin ? 'Crea uno con "Nuevo producto" o usa "Copiar a sucursal"' : 'Crea el primero con el botón "Nuevo producto"'}
             </p>
           </div>
         ) : (
@@ -585,7 +594,7 @@ export default function ProductsPage() {
                         <span className="text-white/70 text-[10px] font-bold">{catProducts.length}</span>
                       </div>
                       {catProducts.map((p, i) => (
-                        <ProductRow key={p.id} product={p} accent={getAccent(cat.color)} isAdmin={isAdmin} currency={currency}
+                        <ProductRow key={p.id} product={p} accent={getAccent(cat.color)} isAdmin={isAdmin} canManage={canManage} currency={currency}
                           isFirst={i === 0} isLast={i === catProducts.length - 1}
                           onMoveUp={() => moveProduct(p.id, 'up')} onMoveDown={() => moveProduct(p.id, 'down')}
                           onToggle={() => toggleAvailable(p)} onEdit={() => openEdit(p)} onDelete={() => setDeleteId(p.id)} />
@@ -601,7 +610,7 @@ export default function ProductsPage() {
                       <span className="text-white/70 text-[10px] font-bold">{uncategorized.length}</span>
                     </div>
                     {uncategorized.map(p => (
-                      <ProductRow key={p.id} product={p} isAdmin={isAdmin} currency={currency}
+                      <ProductRow key={p.id} product={p} isAdmin={isAdmin} canManage={canManage} currency={currency}
                         isFirst isLast
                         onMoveUp={() => {}} onMoveDown={() => {}}
                         onToggle={() => toggleAvailable(p)} onEdit={() => openEdit(p)} onDelete={() => setDeleteId(p.id)} />
