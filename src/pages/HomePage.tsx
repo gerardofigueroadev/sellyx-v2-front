@@ -5,6 +5,7 @@ import { ApiProduct, ApiCategory, CartItem } from '../types';
 import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
+import QrChargeModal from '../components/QrChargeModal';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
 import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
 import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose } from '../lib/syncService';
@@ -496,6 +497,9 @@ export default function HomePage() {
   const [printTicket,  setPrintTicket]      = useState<OrderTicketData | null>(null);
   const [printPhase,   setPrintPhase]       = useState<'client' | 'kitchen' | null>(null);
   const [pendingPrintTicket, setPendingPrintTicket] = useState<OrderTicketData | null>(null);
+  // Cobro con QR pendiente de pago (BISA). Guarda los datos del checkout hasta
+  // que el pago se confirme, momento en que se completa la venta.
+  const [pendingQr, setPendingQr] = useState<{ total: number; orderType: OrderType; customerId: number | null; customerPhone: string | null } | null>(null);
   const [printChoice,  setPrintChoice]      = useState<'client' | 'kitchen' | 'both' | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>(() => {
     try { return JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}'); }
@@ -845,12 +849,20 @@ export default function HomePage() {
 
   const handleRemove = (id: number) => setCartItems(prev => prev.filter(i => i.id !== id));
 
-  const handleCheckout = async (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null = null, customerPhone: string | null = null) => {
+  const handleCheckout = async (paymentMethod: PaymentMethod, orderType: OrderType, customerId: number | null = null, customerPhone: string | null = null, qrPaid = false) => {
     if (!token || cartItems.length === 0) return;
 
     // POS requiere turno activo
     if (!activeShift) {
       toast.warning('Debes abrir la caja antes de cobrar');
+      return;
+    }
+
+    // Pago con QR: primero mostramos el QR de BISA y esperamos la confirmación
+    // del pago. Solo cuando está pagado (qrPaid=true) continuamos con la venta.
+    if (paymentMethod === 'qr' && !qrPaid) {
+      const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
+      setPendingQr({ total, orderType, customerId, customerPhone });
       return;
     }
 
@@ -1003,6 +1015,19 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      {/* Cobro con QR (BISA): muestra el QR y espera el pago; al pagar, completa la venta */}
+      {pendingQr && (
+        <QrChargeModal
+          amount={pendingQr.total}
+          glosa="Cobro Sellyx"
+          onPaid={() => {
+            const p = pendingQr;
+            setPendingQr(null);
+            if (p) handleCheckout('qr', p.orderType, p.customerId, p.customerPhone, true);
+          }}
+          onClose={() => setPendingQr(null)}
+        />
+      )}
       {/* Auto-print on shift close */}
       {printReport && <ShiftPrintReceipt data={printReport} orgName={orgName} currency={currency} hideAmounts={!hasPermission('reports:view')} />}
       {/* Impresión de tickets: cliente primero, luego cocina (2 cortes separados) */}
