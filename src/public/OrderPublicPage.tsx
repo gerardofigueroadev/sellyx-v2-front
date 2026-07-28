@@ -53,8 +53,17 @@ export default function OrderPublicPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  // QR: estado del popup de confirmación de pago ('idle' | 'paying' | 'paid').
-  const [qrPay, setQrPay] = useState<'idle' | 'paying' | 'paid'>('idle');
+  // QR real (BISA): imagen + alias para el polling, y estado del flujo.
+  // 'idle'    → aún no se pidió el QR
+  // 'loading' → generando el QR con BISA
+  // 'showing' → QR visible, esperando el pago (polling)
+  // 'paying'  → detectado el pago, creando el pedido
+  // 'paid'    → pedido creado, redirigiendo a WhatsApp
+  // 'error'   → no se pudo generar el QR
+  const [qrPay, setQrPay] = useState<'idle' | 'loading' | 'showing' | 'paying' | 'paid' | 'error'>('idle');
+  const [qrImg, setQrImg] = useState<string | null>(null);
+  const [qrAlias, setQrAlias] = useState<string | null>(null);
+  const [qrErr, setQrErr] = useState<string | null>(null);
   // Wizard del menú por categorías.
   const [catIndex, setCatIndex] = useState(0);
   const [showCart, setShowCart] = useState(false);
@@ -151,17 +160,68 @@ export default function OrderPublicPage() {
     }
   };
 
-  // QR "Sí pagué": crea el pedido, muestra "Pagado", espera 2s y abre WhatsApp.
-  const confirmQrPaid = async () => {
+  // Al detectar el pago del QR: crea el pedido, muestra "Pagado" y abre WhatsApp.
+  const onQrPaid = async () => {
     setQrPay('paying');
     const ok = await submit(false); // crea el pedido sin navegar a 'confirm'
-    if (!ok) { setQrPay('idle'); return; }
+    if (!ok) { setQrPay('showing'); return; } // reintentable: el QR sigue pagado
     setQrPay('paid');
     setTimeout(() => {
       const waPhone = ctx?.whatsappPhone;
       window.location.href = waPhone ? `https://wa.me/${waPhone}` : 'https://wa.me/';
     }, 2000);
   };
+
+  // Genera el QR de pago con BISA al entrar al paso qr_pending.
+  const generateQr = async () => {
+    setQrPay('loading');
+    setQrErr(null);
+    setQrImg(null);
+    setQrAlias(null);
+    try {
+      const res = await fetch(`${API}/public/order/${token}/qr`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'No se pudo generar el QR');
+      setQrImg(data.imagenQr);
+      setQrAlias(data.alias);
+      setQrPay('showing');
+    } catch (e) {
+      setQrErr((e as Error).message);
+      setQrPay('error');
+    }
+  };
+
+  // Al entrar al paso qr_pending, generar el QR una sola vez.
+  useEffect(() => {
+    if (step === 'qr_pending' && qrPay === 'idle') generateQr();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  // Polling del estado del QR mientras está visible; al pagar, dispara onQrPaid.
+  useEffect(() => {
+    if (qrPay !== 'showing' || !qrAlias) return;
+    let stop = false;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/public/order/${token}/qr/${qrAlias}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (stop) return;
+        if (data.status === 'paid') {
+          clearInterval(id);
+          onQrPaid();
+        } else if (data.status === 'disabled') {
+          clearInterval(id);
+          setQrErr('Este QR fue anulado. Genera uno nuevo.');
+          setQrPay('error');
+        }
+      } catch {
+        // Ignorar fallos puntuales de red; el intervalo reintenta.
+      }
+    }, 3500);
+    return () => { stop = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qrPay, qrAlias, token]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   if (loadErr) return <Shell><Centered>{loadErr}</Centered></Shell>;
@@ -377,26 +437,40 @@ export default function OrderPublicPage() {
 
       {step === 'qr_pending' && (
         <Card>
-          {qrPay === 'idle' && (
-            <button onClick={() => setStep('checkout')} className="text-slate-400 text-xs mb-3">← Volver</button>
+          {(qrPay === 'showing' || qrPay === 'error') && (
+            <button
+              onClick={() => { setStep('checkout'); setQrPay('idle'); }}
+              className="text-slate-400 text-xs mb-3">← Volver</button>
           )}
           <div className="text-center py-4">
             <div className="text-5xl mb-3">📱</div>
             <h2 className="text-white font-bold text-lg">Pago con QR</h2>
-            <p className="text-slate-400 text-sm mt-3">Escanea el QR y paga el total:</p>
+            <p className="text-slate-400 text-sm mt-3">Escanea el QR con la app de tu banco:</p>
             <p className="text-white font-bold text-xl mt-1">{money(total, cur)}</p>
-            {/* TODO(pasarela): aquí irá el QR real de la pasarela. Por ahora el
-                cliente confirma manualmente que pagó. */}
-            <div className="mt-4 mx-auto w-40 h-40 bg-white rounded-xl flex items-center justify-center text-slate-400 text-xs">
-              QR de pago<br/>(en construcción)
+
+            {/* Área del QR según estado */}
+            <div className="mt-4 mx-auto w-56 h-56 bg-white rounded-xl flex items-center justify-center overflow-hidden">
+              {qrPay === 'loading' && <Spinner />}
+              {qrPay === 'error' && (
+                <span className="text-red-500 text-xs px-3 text-center">{qrErr ?? 'Error al generar el QR'}</span>
+              )}
+              {(qrPay === 'showing' || qrPay === 'paying' || qrPay === 'paid') && qrImg && (
+                <img src={`data:image/png;base64,${qrImg}`} alt="QR de pago" className="w-full h-full object-contain p-2" />
+              )}
             </div>
 
-            <button
-              onClick={confirmQrPaid}
-              disabled={qrPay !== 'idle' || phone.trim().length < 5}
-              className="mt-6 w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white py-2.5 rounded-xl text-sm font-medium">
-              Sí, ya pagué
-            </button>
+            {qrPay === 'showing' && (
+              <p className="text-slate-500 text-xs mt-4 flex items-center justify-center gap-2">
+                <Spinner small /> Esperando el pago...
+              </p>
+            )}
+            {qrPay === 'error' && (
+              <button
+                onClick={generateQr}
+                className="mt-5 w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-sm font-medium">
+                Reintentar
+              </button>
+            )}
           </div>
         </Card>
       )}
