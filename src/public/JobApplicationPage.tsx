@@ -200,28 +200,32 @@ export default function JobApplicationPage() {
             <YesNo value={form.fullTimeAvailability} onChange={(v) => set('fullTimeAvailability', v)} />
           </Field>
 
-          <Field label="Turno preferido">
-            <Choice
-              value={form.shift}
-              onChange={(v) => setForm((f) => ({
+          {/* Turno noche: pregunta sí/no. 'night' = sí, 'morning' = no (el
+              backend sigue recibiendo 'morning'|'night' sin cambios). */}
+          <Field label="🌙 ¿Puedes trabajar en el turno noche?">
+            <YesNo
+              value={form.shift === '' ? null : form.shift === 'night'}
+              onChange={(yes) => setForm((f) => ({
                 ...f,
-                shift: v as Shift,
-                // Al cambiar de noche a mañana, limpiar la respuesta de transporte.
-                nightTransport: v === 'night' ? f.nightTransport : '',
+                shift: yes ? 'night' : 'morning',
+                // Si ya no es turno noche, limpiar la respuesta de transporte.
+                nightTransport: yes ? f.nightTransport : '',
               }))}
-              options={[['morning', '🌅 Mañana'], ['night', '🌙 Noche']]}
             />
           </Field>
 
-          {/* Solo para turno noche: cómo se transporta. */}
+          {/* Solo si trabajará en turno noche: cómo se transporta.
+              Aparece con una transición suave para un look más pulido. */}
           {form.shift === 'night' && (
-            <Field label="Para el turno noche, ¿cómo se transporta?">
-              <Choice
-                value={form.nightTransport}
-                onChange={(v) => set('nightTransport', v as NightTransport)}
-                options={[['own', '🛵 Transporte propio'], ['someone', '🧍 Alguien lo transporta'], ['yango', '🚕 Pide Yango']]}
-              />
-            </Field>
+            <div className="animate-[fadeIn_0.2s_ease-out]">
+              <Field label="Para el turno noche, ¿cómo se transporta?">
+                <Choice
+                  value={form.nightTransport}
+                  onChange={(v) => set('nightTransport', v as NightTransport)}
+                  options={[['own', '🛵 Transporte propio'], ['someone', '🧍 Alguien lo transporta'], ['yango', '🚕 Pide Yango']]}
+                />
+              </Field>
+            </div>
           )}
 
           <Field label="¿Disponible fines de semana y feriados?">
@@ -282,6 +286,8 @@ export default function JobApplicationPage() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-slate-900 text-white px-4 py-6">
+      {/* Animación para la sub-pregunta condicional del turno noche. */}
+      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       <div className="max-w-md mx-auto pb-24">{children}</div>
     </div>
   );
