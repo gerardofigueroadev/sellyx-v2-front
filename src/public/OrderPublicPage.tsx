@@ -179,7 +179,13 @@ export default function OrderPublicPage() {
     setQrImg(null);
     setQrAlias(null);
     try {
-      const res = await fetch(`${API}/public/order/${token}/qr`, { method: 'POST' });
+      const res = await fetch(`${API}/public/order/${token}/qr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cartItems.map((p) => ({ productId: p.id, quantity: qty[p.id] })),
+        }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'No se pudo generar el QR');
       setQrImg(data.imagenQr);
