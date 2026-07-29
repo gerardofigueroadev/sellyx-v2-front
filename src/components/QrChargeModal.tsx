@@ -41,11 +41,14 @@ export default function QrChargeModal({
   const generatedRef = useRef(false);
 
   // 1) Generar el QR al montar (una sola vez, ver generatedRef).
+  //    NO usamos un flag `cancelled` en el cleanup: con StrictMode el efecto se
+  //    monta→desmonta→remonta y el cleanup marcaría cancelado el ÚNICO fetch en
+  //    curso, dejando el modal colgado en "loading". El guard generatedRef ya
+  //    evita el doble fetch, así que dejamos que el resultado se aplique siempre.
   useEffect(() => {
     if (generatedRef.current) return;
     generatedRef.current = true;
 
-    let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`${API}/qr`, {
@@ -56,19 +59,16 @@ export default function QrChargeModal({
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.message || 'No se pudo generar el QR');
-        if (cancelled) return;
         setQr(data);
         aliasRef.current = data.alias;
         setPhase('showing');
       } catch (e) {
-        if (cancelled) return;
         setErr((e as Error).message);
         setPhase('error');
-        // Si falló, permitir reintentar (el botón "Reintentar" remonta el efecto).
+        // Si falló, permitir reintentar (el botón remonta el modal).
         generatedRef.current = false;
       }
     })();
-    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
