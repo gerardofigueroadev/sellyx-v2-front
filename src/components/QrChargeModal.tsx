@@ -95,6 +95,18 @@ export default function QrChargeModal({
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [phase, token, onPaid]);
 
+  // Cancelar con confirmación: hay una ventana de ~3.5s entre que el cliente
+  // paga y el polling lo detecta; si el cajero cancela ahí, se perdería una
+  // venta ya cobrada. Pedimos confirmación explícita para evitarlo.
+  const handleCancel = () => {
+    const ok = window.confirm(
+      '¿El cliente NO pagó todavía?\n\n' +
+      'Si ya escaneó y pagó, NO canceles: espera unos segundos a que se confirme. ' +
+      'Cancelar un cobro ya pagado no registrará la venta.',
+    );
+    if (ok) onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-xs bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
@@ -103,7 +115,10 @@ export default function QrChargeModal({
             <span className="text-lg">📱</span>
             <h2 className="text-white font-bold text-sm">Cobro con QR</h2>
           </div>
-          {phase !== 'paid' && (
+          {phase === 'showing' && (
+            <button onClick={handleCancel} className="text-slate-500 hover:text-white text-lg">✕</button>
+          )}
+          {(phase === 'loading' || phase === 'error') && (
             <button onClick={onClose} className="text-slate-500 hover:text-white text-lg">✕</button>
           )}
         </div>
@@ -138,7 +153,7 @@ export default function QrChargeModal({
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
                 Esperando el pago…
               </div>
-              <button onClick={onClose} className="mt-4 text-slate-500 hover:text-slate-300 text-xs">
+              <button onClick={handleCancel} className="mt-4 text-slate-500 hover:text-slate-300 text-xs">
                 Cancelar
               </button>
             </>
