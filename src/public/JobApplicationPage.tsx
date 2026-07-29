@@ -4,7 +4,7 @@ import API_URL from '../config';
 const API = `${API_URL}/api`;
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
-interface Ctx { orgName: string }
+interface Ctx { orgName: string; askShift: boolean }
 type Sex = 'male' | 'female';
 type Shift = 'morning' | 'night';
 // Solo aplica si el turno es noche: cómo se transporta el postulante.
@@ -79,6 +79,9 @@ export default function JobApplicationPage() {
   const salaryErr =
     form.salaryExpectation === '' ? '' : Number(form.salaryExpectation) <= 0 ? 'Ingresa un monto válido.' : '';
 
+  // La pregunta de turno solo se exige si la org la tiene activada.
+  const askShift = ctx?.askShift !== false;
+
   // Habilita el envío solo si todo está completo y sin errores.
   const isValid =
     !!form.firstName.trim() &&
@@ -88,8 +91,7 @@ export default function JobApplicationPage() {
     !!form.sex &&
     !!form.age && !ageErr &&
     form.fullTimeAvailability !== null &&
-    !!form.shift &&
-    (form.shift !== 'night' || !!form.nightTransport) &&
+    (!askShift || (!!form.shift && (form.shift !== 'night' || !!form.nightTransport))) &&
     form.workedInSimilar !== null &&
     !!form.livesAt.trim() &&
     !!form.salaryExpectation && !salaryErr &&
@@ -111,8 +113,9 @@ export default function JobApplicationPage() {
           sex: form.sex,
           age: Number(form.age),
           fullTimeAvailability: form.fullTimeAvailability,
-          shift: form.shift,
-          nightTransport: form.shift === 'night' ? form.nightTransport : undefined,
+          // Solo enviamos turno si la org tiene activada la pregunta.
+          shift: askShift ? form.shift : undefined,
+          nightTransport: askShift && form.shift === 'night' ? form.nightTransport : undefined,
           workedInSimilar: form.workedInSimilar,
           previousWorkplace: form.previousWorkplace.trim() || undefined,
           previousDuration: form.previousDuration.trim() || undefined,
@@ -201,22 +204,25 @@ export default function JobApplicationPage() {
           </Field>
 
           {/* Turno noche: pregunta sí/no. 'night' = sí, 'morning' = no (el
-              backend sigue recibiendo 'morning'|'night' sin cambios). */}
-          <Field label="🌙 ¿Puedes trabajar en el turno noche?">
-            <YesNo
-              value={form.shift === '' ? null : form.shift === 'night'}
-              onChange={(yes) => setForm((f) => ({
-                ...f,
-                shift: yes ? 'night' : 'morning',
-                // Si ya no es turno noche, limpiar la respuesta de transporte.
-                nightTransport: yes ? f.nightTransport : '',
-              }))}
-            />
-          </Field>
+              backend sigue recibiendo 'morning'|'night' sin cambios).
+              Solo se muestra si la org tiene activada la pregunta de turno. */}
+          {askShift && (
+            <Field label="🌙 ¿Puedes trabajar en el turno noche?">
+              <YesNo
+                value={form.shift === '' ? null : form.shift === 'night'}
+                onChange={(yes) => setForm((f) => ({
+                  ...f,
+                  shift: yes ? 'night' : 'morning',
+                  // Si ya no es turno noche, limpiar la respuesta de transporte.
+                  nightTransport: yes ? f.nightTransport : '',
+                }))}
+              />
+            </Field>
+          )}
 
           {/* Solo si trabajará en turno noche: cómo se transporta.
               Aparece con una transición suave para un look más pulido. */}
-          {form.shift === 'night' && (
+          {askShift && form.shift === 'night' && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <Field label="Para el turno noche, ¿cómo se transporta?">
                 <Choice
