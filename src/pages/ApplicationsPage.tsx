@@ -25,7 +25,9 @@ interface Application {
   sex: Sex;
   age: number;
   fullTimeAvailability: boolean;
-  shift: Shift | null; // null: la org tenía desactivada la pregunta de turno
+  shift: Shift | null;            // legacy: solo postulaciones antiguas
+  availableMorning: boolean;      // nuevo: ¿disponible turno mañana?
+  availableNight: boolean;        // nuevo: ¿disponible turno noche?
   nightTransport: NightTransport | null;
   workedInSimilar: boolean;
   previousWorkplace: string | null;
@@ -156,8 +158,16 @@ function ApplicationDetailModal({
           <Row label="Sexo" value={SEX_LABEL[app.sex]} />
           <Row label="Edad" value={`${app.age} años`} />
           <Row label="Disponibilidad de tiempo" value={yesNo(app.fullTimeAvailability)} />
-          <Row label="Turno preferido" value={app.shift ? SHIFT_LABEL[app.shift] : 'No especificado'} />
-          {app.shift === 'night' && (
+          {/* Postulaciones antiguas usan `shift`; las nuevas, availableMorning/Night. */}
+          {app.shift ? (
+            <Row label="Turno preferido" value={SHIFT_LABEL[app.shift]} />
+          ) : (
+            <>
+              <Row label="Disponible turno mañana" value={yesNo(app.availableMorning)} />
+              <Row label="Disponible turno noche" value={yesNo(app.availableNight)} />
+            </>
+          )}
+          {(app.shift === 'night' || app.availableNight) && (
             <Row label="Transporte (turno noche)" value={app.nightTransport ? NIGHT_TRANSPORT_LABEL[app.nightTransport] : '—'} />
           )}
           <Row label="Fines de semana / feriados" value={yesNo(app.weekendAvailability)} />
@@ -194,6 +204,30 @@ function ApplicationDetailModal({
   );
 }
 
+// ─── Switch de config de turno ────────────────────────────────────────────────
+function ShiftToggle({
+  label, checked, disabled, onToggle,
+}: {
+  label: string; checked: boolean | null; disabled?: boolean; onToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-white text-sm">{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked === true}
+        disabled={checked === null || disabled}
+        onClick={onToggle}
+        title={disabled && checked ? 'Debe quedar al menos un turno activo' : undefined}
+        className={`relative w-11 h-6 rounded-full transition disabled:opacity-50 shrink-0 ${checked ? 'bg-emerald-600' : 'bg-slate-600'}`}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${checked ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 20;
 
@@ -207,9 +241,10 @@ export default function ApplicationsPage() {
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Application | null>(null);
 
-  // Config del formulario: si se pregunta el turno (mañana/noche). Vive en
-  // settings.jobForm.askShift de la org. Default true (se pregunta).
-  const [askShift, setAskShift] = useState<boolean | null>(null); // null: aún cargando
+  // Config del formulario: si se pregunta disponibilidad de cada turno. Vive en
+  // settings.jobForm.{askMorning,askNight} de la org. Default true (se preguntan).
+  const [askMorning, setAskMorning] = useState<boolean | null>(null); // null: cargando
+  const [askNight, setAskNight] = useState<boolean | null>(null);
   const [savingShift, setSavingShift] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -232,31 +267,39 @@ export default function ApplicationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Cargar la config del formulario (askShift) una vez al montar.
+  // Cargar la config del formulario (askMorning/askNight) una vez al montar.
   useEffect(() => {
     if (!token) return;
     (async () => {
       const res = await apiFetch(token, '/organizations/my/settings');
       if (res.ok) {
-        const s = await res.json();
-        setAskShift(s?.jobForm?.askShift !== false); // default true
+        const jf = (await res.json())?.jobForm ?? {};
+        setAskMorning(jf.askMorning !== false); // default true
+        setAskNight(jf.askNight !== false);
       } else {
-        setAskShift(true); // si falla, asumimos el comportamiento por defecto
+        setAskMorning(true); // si falla, comportamiento por defecto
+        setAskNight(true);
       }
     })();
   }, [token]);
 
-  // Activa/desactiva la pregunta de turno y lo persiste en los settings de la org.
-  const toggleAskShift = async () => {
-    if (!token || askShift === null || savingShift) return;
-    const next = !askShift;
+  // Activa/desactiva una pregunta de turno y persiste en settings de la org.
+  // Regla: no se pueden apagar ambas (al menos un turno debe preguntarse).
+  const toggleShift = async (which: 'morning' | 'night') => {
+    if (!token || askMorning === null || askNight === null || savingShift) return;
+    const nextMorning = which === 'morning' ? !askMorning : askMorning;
+    const nextNight = which === 'night' ? !askNight : askNight;
+    // No permitir apagar las dos.
+    if (!nextMorning && !nextNight) return;
+
     setSavingShift(true);
-    setAskShift(next); // optimista
+    setAskMorning(nextMorning); // optimista
+    setAskNight(nextNight);
     const res = await apiFetch(token, '/organizations/my/settings', {
       method: 'PATCH',
-      body: JSON.stringify({ jobForm: { askShift: next } }),
+      body: JSON.stringify({ jobForm: { askMorning: nextMorning, askNight: nextNight } }),
     });
-    if (!res.ok) setAskShift(!next); // revertir si falla
+    if (!res.ok) { setAskMorning(askMorning); setAskNight(askNight); } // revertir
     setSavingShift(false);
   };
 
@@ -291,22 +334,24 @@ export default function ApplicationsPage() {
             <p className="text-slate-500 text-sm">Candidatos del formulario de contratación</p>
           </div>
 
-          {/* Config del formulario: mostrar u ocultar la pregunta de turno. */}
-          <div className="flex items-center gap-3 bg-slate-800 border border-slate-700/50 rounded-xl px-4 py-2.5">
-            <div className="text-right">
-              <p className="text-white text-sm font-medium">Preguntar turno</p>
-              <p className="text-slate-500 text-xs">Mañana / Noche en el formulario</p>
+          {/* Config del formulario: qué turnos se preguntan (independientes). */}
+          <div className="bg-slate-800 border border-slate-700/50 rounded-xl px-4 py-3">
+            <p className="text-slate-400 text-xs mb-2">Preguntas de turno en el formulario</p>
+            <div className="space-y-2">
+              <ShiftToggle
+                label="☀️ Disponibilidad turno mañana"
+                checked={askMorning}
+                disabled={savingShift || (askMorning === true && askNight === false)}
+                onToggle={() => toggleShift('morning')}
+              />
+              <ShiftToggle
+                label="🌙 Disponibilidad turno noche"
+                checked={askNight}
+                disabled={savingShift || (askNight === true && askMorning === false)}
+                onToggle={() => toggleShift('night')}
+              />
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={askShift === true}
-              disabled={askShift === null || savingShift}
-              onClick={toggleAskShift}
-              className={`relative w-11 h-6 rounded-full transition disabled:opacity-50 ${askShift ? 'bg-emerald-600' : 'bg-slate-600'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${askShift ? 'translate-x-5' : ''}`} />
-            </button>
+            <p className="text-slate-600 text-[11px] mt-2">Al menos un turno debe quedar activo.</p>
           </div>
         </div>
 

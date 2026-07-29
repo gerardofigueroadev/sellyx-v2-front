@@ -4,10 +4,9 @@ import API_URL from '../config';
 const API = `${API_URL}/api`;
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
-interface Ctx { orgName: string; askShift: boolean }
+interface Ctx { orgName: string; askMorning: boolean; askNight: boolean }
 type Sex = 'male' | 'female';
-type Shift = 'morning' | 'night';
-// Solo aplica si el turno es noche: cómo se transporta el postulante.
+// Solo aplica si está disponible de noche: cómo se transporta el postulante.
 type NightTransport = 'own' | 'someone' | 'yango';
 
 interface FormState {
@@ -18,7 +17,9 @@ interface FormState {
   sex: Sex | '';
   age: string;
   fullTimeAvailability: boolean | null;
-  shift: Shift | '';
+  // Disponibilidad por turno (preguntas independientes). null = sin responder.
+  availableMorning: boolean | null;
+  availableNight: boolean | null;
   nightTransport: NightTransport | '';
   workedInSimilar: boolean | null;
   previousWorkplace: string;
@@ -31,7 +32,8 @@ interface FormState {
 
 const EMPTY: FormState = {
   firstName: '', lastName: '', phone: '', idCard: '', sex: '', age: '',
-  fullTimeAvailability: null, shift: '', nightTransport: '', workedInSimilar: null,
+  fullTimeAvailability: null, availableMorning: null, availableNight: null,
+  nightTransport: '', workedInSimilar: null,
   previousWorkplace: '', previousDuration: '', livesAt: '',
   salaryExpectation: '', availableFrom: '', weekendAvailability: null,
 };
@@ -79,10 +81,13 @@ export default function JobApplicationPage() {
   const salaryErr =
     form.salaryExpectation === '' ? '' : Number(form.salaryExpectation) <= 0 ? 'Ingresa un monto válido.' : '';
 
-  // La pregunta de turno solo se exige si la org la tiene activada.
-  const askShift = ctx?.askShift !== false;
+  // Qué preguntas de turno muestra la org (default: ambas).
+  const askMorning = ctx?.askMorning !== false;
+  const askNight = ctx?.askNight !== false;
 
   // Habilita el envío solo si todo está completo y sin errores.
+  // Turno: cada pregunta visible debe responderse (sí/no); se permite decir No
+  // a ambas. El transporte solo se exige si respondió Sí a turno noche.
   const isValid =
     !!form.firstName.trim() &&
     !!form.lastName.trim() &&
@@ -91,7 +96,9 @@ export default function JobApplicationPage() {
     !!form.sex &&
     !!form.age && !ageErr &&
     form.fullTimeAvailability !== null &&
-    (!askShift || (!!form.shift && (form.shift !== 'night' || !!form.nightTransport))) &&
+    (!askMorning || form.availableMorning !== null) &&
+    (!askNight || form.availableNight !== null) &&
+    (!askNight || form.availableNight !== true || !!form.nightTransport) &&
     form.workedInSimilar !== null &&
     !!form.livesAt.trim() &&
     !!form.salaryExpectation && !salaryErr &&
@@ -113,9 +120,10 @@ export default function JobApplicationPage() {
           sex: form.sex,
           age: Number(form.age),
           fullTimeAvailability: form.fullTimeAvailability,
-          // Solo enviamos turno si la org tiene activada la pregunta.
-          shift: askShift ? form.shift : undefined,
-          nightTransport: askShift && form.shift === 'night' ? form.nightTransport : undefined,
+          // Disponibilidad por turno: solo enviamos cada una si la org la pregunta.
+          availableMorning: askMorning ? form.availableMorning === true : undefined,
+          availableNight: askNight ? form.availableNight === true : undefined,
+          nightTransport: askNight && form.availableNight === true ? form.nightTransport : undefined,
           workedInSimilar: form.workedInSimilar,
           previousWorkplace: form.previousWorkplace.trim() || undefined,
           previousDuration: form.previousDuration.trim() || undefined,
@@ -203,26 +211,30 @@ export default function JobApplicationPage() {
             <YesNo value={form.fullTimeAvailability} onChange={(v) => set('fullTimeAvailability', v)} />
           </Field>
 
-          {/* Turno noche: pregunta sí/no. 'night' = sí, 'morning' = no (el
-              backend sigue recibiendo 'morning'|'night' sin cambios).
-              Solo se muestra si la org tiene activada la pregunta de turno. */}
-          {askShift && (
-            <Field label="🌙 ¿Puedes trabajar en el turno noche?">
+          {/* Disponibilidad turno mañana (pregunta independiente sí/no). */}
+          {askMorning && (
+            <Field label="☀️ ¿Tienes disponibilidad de trabajar turno mañana?">
+              <YesNo value={form.availableMorning} onChange={(v) => set('availableMorning', v)} />
+            </Field>
+          )}
+
+          {/* Disponibilidad turno noche (pregunta independiente sí/no). */}
+          {askNight && (
+            <Field label="🌙 ¿Tienes disponibilidad de trabajar turno noche?">
               <YesNo
-                value={form.shift === '' ? null : form.shift === 'night'}
+                value={form.availableNight}
                 onChange={(yes) => setForm((f) => ({
                   ...f,
-                  shift: yes ? 'night' : 'morning',
-                  // Si ya no es turno noche, limpiar la respuesta de transporte.
+                  availableNight: yes,
+                  // Si ya no está disponible de noche, limpiar el transporte.
                   nightTransport: yes ? f.nightTransport : '',
                 }))}
               />
             </Field>
           )}
 
-          {/* Solo si trabajará en turno noche: cómo se transporta.
-              Aparece con una transición suave para un look más pulido. */}
-          {askShift && form.shift === 'night' && (
+          {/* Solo si está disponible de noche: cómo se transporta. */}
+          {askNight && form.availableNight === true && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <Field label="Para el turno noche, ¿cómo se transporta?">
                 <Choice
