@@ -11,7 +11,7 @@ interface SidebarProps {
 const allMenuItems: { id: string; icon: string; label: string; permission: string; offlineSupported?: boolean }[] = [
   { id: 'home',          icon: '🏠', label: 'Inicio',        permission: 'sales:view',      offlineSupported: true  },
   { id: 'orders',        icon: '📋', label: 'Pedidos',        permission: 'sales:view',      offlineSupported: false },
-  // { id: 'qrpayment',    icon: '📲', label: 'Cobro con QR',   permission: 'sales:view',      offlineSupported: false }, // TODO: reactivar cuando funcione
+  { id: 'qrpayment',     icon: '📲', label: 'Cobros con QR',  permission: 'org:manage',      offlineSupported: false },
   { id: 'shifts',        icon: '🕐', label: 'Turnos',         permission: 'shifts:manage',   offlineSupported: false },
   { id: 'products',      icon: '📦', label: 'Productos',      permission: 'products:view',   offlineSupported: false },
   { id: 'categories',    icon: '🗂️', label: 'Categorías',    permission: 'products:manage', offlineSupported: false },

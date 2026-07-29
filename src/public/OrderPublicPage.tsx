@@ -184,6 +184,8 @@ export default function OrderPublicPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: cartItems.map((p) => ({ productId: p.id, quantity: qty[p.id] })),
+          // Sucursal elegida, para ver el cobro por sucursal en el admin.
+          branchId: branch?.id,
         }),
       });
       const data = await res.json();

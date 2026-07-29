@@ -29,7 +29,7 @@ export default function QrChargeModal({
   onPaid: () => void;
   onClose: () => void;
 }) {
-  const { token, currency } = useAuth();
+  const { token, currency, activeBranchId } = useAuth();
   const [phase, setPhase] = useState<Phase>('loading');
   const [qr, setQr] = useState<QrGenResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -44,7 +44,8 @@ export default function QrChargeModal({
         const res = await fetch(`${API}/qr`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ amount, glosa }),
+          // branchId: sucursal activa, para ver el cobro por sucursal en el admin.
+          body: JSON.stringify({ amount, glosa, branchId: activeBranchId ?? undefined }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.message || 'No se pudo generar el QR');
