@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import API_URL from '../config';
 
 const API = `${API_URL}/api`;
@@ -64,6 +64,8 @@ export default function OrderPublicPage() {
   const [qrImg, setQrImg] = useState<string | null>(null);
   const [qrAlias, setQrAlias] = useState<string | null>(null);
   const [qrErr, setQrErr] = useState<string | null>(null);
+  // Guard anti-duplicado: evita generar dos QR (StrictMode / re-render).
+  const qrGenRef = useRef(false);
   // Wizard del menú por categorías.
   const [catIndex, setCatIndex] = useState(0);
   const [showCart, setShowCart] = useState(false);
@@ -196,12 +198,18 @@ export default function OrderPublicPage() {
     } catch (e) {
       setQrErr((e as Error).message);
       setQrPay('error');
+      // Permitir reintentar (el botón "Reintentar" vuelve a llamar generateQr).
+      qrGenRef.current = false;
     }
   };
 
-  // Al entrar al paso qr_pending, generar el QR una sola vez.
+  // Al entrar al paso qr_pending, generar el QR una sola vez. El guard evita
+  // que StrictMode (doble montaje) o un re-render generen dos QR en BISA.
   useEffect(() => {
-    if (step === 'qr_pending' && qrPay === 'idle') generateQr();
+    if (step === 'qr_pending' && qrPay === 'idle' && !qrGenRef.current) {
+      qrGenRef.current = true;
+      generateQr();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
@@ -447,7 +455,7 @@ export default function OrderPublicPage() {
         <Card>
           {(qrPay === 'showing' || qrPay === 'error') && (
             <button
-              onClick={() => { setStep('checkout'); setQrPay('idle'); }}
+              onClick={() => { setStep('checkout'); setQrPay('idle'); qrGenRef.current = false; }}
               className="text-slate-400 text-xs mb-3">← Volver</button>
           )}
           <div className="text-center py-4">

@@ -35,9 +35,16 @@ export default function QrChargeModal({
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aliasRef = useRef<string | null>(null);
+  // Guard: garantiza que el QR se genere UNA sola vez. Sin esto, React
+  // StrictMode (o un re-render) monta el efecto dos veces y se crean dos QR
+  // en BISA (uno queda huérfano/pending). El ref persiste entre montajes.
+  const generatedRef = useRef(false);
 
-  // 1) Generar el QR al montar.
+  // 1) Generar el QR al montar (una sola vez, ver generatedRef).
   useEffect(() => {
+    if (generatedRef.current) return;
+    generatedRef.current = true;
+
     let cancelled = false;
     (async () => {
       try {
@@ -57,10 +64,13 @@ export default function QrChargeModal({
         if (cancelled) return;
         setErr((e as Error).message);
         setPhase('error');
+        // Si falló, permitir reintentar (el botón "Reintentar" remonta el efecto).
+        generatedRef.current = false;
       }
     })();
     return () => { cancelled = true; };
-  }, [token, amount, glosa]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 2) Polling del estado mientras se muestra el QR.
   useEffect(() => {

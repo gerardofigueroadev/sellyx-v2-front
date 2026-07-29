@@ -103,7 +103,9 @@ export default function QrPaymentPage() {
   const { token, currency, branches, activeBranchId } = useAuth();
   const [rows, setRows] = useState<QrPayment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | QrStatus>('all');
+  // Por defecto solo mostramos los pagos confirmados; los pendientes
+  // (abandonados/expirados) se ven eligiendo su filtro. Evita ruido en la lista.
+  const [filter, setFilter] = useState<'all' | QrStatus>('paid');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<QrPayment | null>(null);
