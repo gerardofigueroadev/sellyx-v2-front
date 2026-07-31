@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import BASE_URL from '../config';
 import { identifyUser, resetAnalytics } from '../lib/analytics';
 
@@ -57,6 +57,8 @@ interface AuthContextType {
   branches: Branch[];
   activeBranchId: number | null;
   setActiveBranchId: (id: number) => void;
+  /** Recarga la lista de sucursales (llamar tras crear/editar una sucursal). */
+  refreshBranches: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -113,24 +115,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.id]);
 
-  // Fetch branches for admin users
-  useEffect(() => {
+  // Carga (o recarga) las sucursales del admin. Reutilizable: se llama al
+  // montar y tras crear/editar una sucursal (refreshBranches expuesto abajo).
+  const loadBranches = useCallback(async () => {
     if (!token || !user) return;
     const isAdmin = user.permissions?.includes('orders:view_all');
     if (!isAdmin) return;
-    fetch(`${API_URL}/branches`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then((list: Branch[] | null) => {
-        if (!list) return;
-        setBranches(list);
-        localStorage.setItem('pos_branches', JSON.stringify(list));
-        if (list.length > 0 && activeBranchId === null) {
-          setActiveBranchId(list[0].id);
-        }
-      })
-      .catch(() => {/* offline: usar cache */});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, user?.id]);
+    try {
+      const res = await fetch(`${API_URL}/branches`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const list: Branch[] = await res.json();
+      if (!Array.isArray(list)) return;
+      setBranches(list);
+      localStorage.setItem('pos_branches', JSON.stringify(list));
+      // Corregir la sucursal activa si: (a) no hay ninguna, o (b) la que había
+      // ya no existe (borrada/recreada) → evita quedar "atascado" apuntando a
+      // una sucursal inexistente y vender/cargar en la equivocada.
+      setActiveBranchId(prev => {
+        if (list.length === 0) return prev;
+        if (prev === null || !list.some(b => b.id === prev)) return list[0].id;
+        return prev;
+      });
+    } catch {
+      /* offline: usar cache */
+    }
+  }, [token, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch branches for admin users (al montar / cambiar de sesión).
+  useEffect(() => { loadBranches(); }, [loadBranches]);
 
   const login = async (username: string, password: string, orgCode?: string) => {
     try {
@@ -268,7 +280,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated, user, token, login, logout, hasPermission,
       refreshSubscription, refreshOrgSettings, getValidToken,
       currency, enabledPaymentMethods,
-      branches, activeBranchId, setActiveBranchId,
+      branches, activeBranchId, setActiveBranchId, refreshBranches: loadBranches,
     }}>
       {children}
     </AuthContext.Provider>

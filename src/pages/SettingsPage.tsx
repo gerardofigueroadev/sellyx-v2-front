@@ -144,7 +144,7 @@ interface BranchForm { name: string; address: string; phone: string; isActive: b
 const emptyBranch: BranchForm = { name: '', address: '', phone: '', isActive: true };
 
 function TabSucursales({ token }: { token: string }) {
-  const { user } = useAuth();
+  const { user, refreshBranches } = useAuth();
   const toast = useToast();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,15 +174,23 @@ function TabSucursales({ token }: { token: string }) {
       : { ...form, name: form.name.trim(), organizationId: user?.organization?.id };
     const res = await apiFetch(token, editing ? `/branches/${editing.id}` : '/branches', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(body) });
     if (!res.ok) { const d = await res.json(); toast.error(d.message ?? 'Error al guardar'); setSaving(false); return; }
-    await load(); setShowModal(false); toast.success(editing ? 'Sucursal actualizada' : 'Sucursal creada');
+    await load();
+    // Refrescar las sucursales del AuthContext (selector del Sidebar / POS) para
+    // que la nueva sucursal aparezca sin recargar la app.
+    await refreshBranches();
+    setShowModal(false); toast.success(editing ? 'Sucursal actualizada' : 'Sucursal creada');
     setSaving(false);
   };
 
   const handleDelete = async () => {
     if (!deleteId) return;
     const res = await apiFetch(token, `/branches/${deleteId}`, { method: 'DELETE' });
-    if (res.ok) { setBranches(p => p.filter(b => b.id !== deleteId)); toast.success('Sucursal eliminada'); }
-    else toast.error('No se pudo eliminar');
+    if (res.ok) {
+      setBranches(p => p.filter(b => b.id !== deleteId));
+      // Refrescar el AuthContext: corrige la sucursal activa si era la borrada.
+      await refreshBranches();
+      toast.success('Sucursal eliminada');
+    } else toast.error('No se pudo eliminar');
     setDeleteId(null);
   };
 

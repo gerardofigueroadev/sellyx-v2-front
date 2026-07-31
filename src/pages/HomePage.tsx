@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { ApiProduct, ApiCategory, CartItem } from '../types';
@@ -460,7 +460,7 @@ function CloseShiftModal({ onConfirm, onClose }: {
 
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { token, user, hasPermission, activeBranchId, currency, getValidToken } = useAuth();
+  const { token, user, hasPermission, activeBranchId, branches, currency, getValidToken } = useAuth();
   const toast = useToast();
   const tauri = isTauri();
   const orgName = (user as any)?.organization?.name ?? 'Mi Negocio';
@@ -508,6 +508,14 @@ export default function HomePage() {
   const [mobileCatId,  setMobileCatId]      = useState<number | null>(null);
   const layoutMode: 'grid' | 'columns' = orgSettings.posLayout === 'columns' ? 'columns' : 'grid';
   const showCategoryFilters = orgSettings.showCategoryFilters !== false;
+
+  // Categorías con al menos un producto en la sucursal activa. Evita mostrar
+  // categorías vacías en el menú (p.ej. una categoría cuyos productos son de
+  // otra sucursal). Si una categoría no tiene productos aquí, no se lista.
+  const visibleCategories = useMemo(
+    () => categories.filter(cat => products.some(p => p.category?.id === cat.id)),
+    [categories, products],
+  );
 
   // useEffect garantiza que el div ya está en el DOM antes de imprimir
   useEffect(() => {
@@ -939,7 +947,11 @@ export default function HomePage() {
         notes:     i.note,
       })),
       total,
-      branchName:  (user as any)?.branch?.name ?? '',
+      // Nombre de sucursal para el ticket: el cajero lo tiene en user.branch;
+      // el admin no (branch null), así que lo resolvemos de la sucursal activa.
+      branchName:  (user as any)?.branch?.name
+        ?? branches.find((b) => b.id === activeBranchId)?.name
+        ?? '',
       orgName,
       cashierName: (user as any)?.name,
       createdAt:   clientCreatedAt,
@@ -1088,7 +1100,7 @@ export default function HomePage() {
               >
                 Todos
               </button>
-              {categories.map(cat => (
+              {visibleCategories.map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => setMobileCatId(mobileCatId === cat.id ? null : cat.id)}
@@ -1122,21 +1134,21 @@ export default function HomePage() {
                   </div>
                 </div>
               ))
-            ) : categories.length === 0 ? (
+            ) : visibleCategories.length === 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 12, color: '#64748b' }}>
                 <span style={{ fontSize: 48 }}>🗂️</span>
-                <p style={{ fontWeight: 600, color: '#94a3b8' }}>No hay categorías configuradas</p>
+                <p style={{ fontWeight: 600, color: '#94a3b8' }}>No hay productos en esta sucursal</p>
               </div>
             ) : layoutMode === 'columns' ? (
               /* ── Vista columnas: una columna por categoría en grid horizontal ── */
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: `repeat(${
-                  (mobileCatId === null ? categories : categories.filter(c => c.id === mobileCatId)).length
+                  (mobileCatId === null ? visibleCategories : visibleCategories.filter(c => c.id === mobileCatId)).length
                 }, minmax(140px, 1fr))`,
                 gap: 8, alignItems: 'start',
               }}>
-                {categories
+                {visibleCategories
                   .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                   .map(cat => {
                     const catProducts = products
@@ -1159,7 +1171,7 @@ export default function HomePage() {
               </div>
             ) : (
               /* ── Vista grid: secciones por categoría en filas ── */
-              categories
+              visibleCategories
                 .filter(cat => mobileCatId === null || cat.id === mobileCatId)
                 .map(cat => {
                 const catProducts = products
