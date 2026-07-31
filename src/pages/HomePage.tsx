@@ -8,7 +8,7 @@ import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintRece
 import QrChargeModal from '../components/QrChargeModal';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
 import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
-import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose } from '../lib/syncService';
+import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose, KITCHEN_UPDATED_EVENT } from '../lib/syncService';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
 
@@ -38,6 +38,7 @@ interface KitchenOrder {
   id: number;            // server id (0 si todavía es local)
   localId?: string;      // presente si proviene del outbox offline
   isLocal?: boolean;     // badge visual
+  channel?: string;      // 'pos' | 'chatbot' | 'web' — para distinguir WhatsApp
   orderNumber: string;
   ticketNumber: number | string;
   createdAt: string;
@@ -90,6 +91,8 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
           id: o.server_id ?? 0,
           localId: o.local_id,
           isLocal: isUnsynced,
+          // Canal: columna nueva, o del payload (retrocompat con filas viejas).
+          channel: o.channel ?? payload.channel ?? 'pos',
           orderNumber: o.local_id.slice(0, 8).toUpperCase(),
           // El ticketNumber real lo generó la PC y está en el payload. Solo si
           // faltara (órdenes viejas pre-cambio) caemos al sufijo del localId.
@@ -116,6 +119,13 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
   }, [tauri, products, shiftOpenedAt]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
+
+  // Recargar cuando el pull (syncService) ingresa pedidos WhatsApp/web nuevos.
+  useEffect(() => {
+    const onKitchenUpdate = () => load();
+    window.addEventListener(KITCHEN_UPDATED_EVENT, onKitchenUpdate);
+    return () => window.removeEventListener(KITCHEN_UPDATED_EVENT, onKitchenUpdate);
+  }, [load]);
 
   // Re-render cada minuto para actualizar los timers sin tocar nada más
   useEffect(() => {
@@ -203,8 +213,10 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
           orders.map(order => {
             const style = urgencyStyle(order.createdAt, warningMins, dangerMins);
             const key = order.localId ?? `s${order.id}`;
+            // Pedido WhatsApp: acento verde en el borde izquierdo (como OrdersPage).
+            const chanAccent = order.channel === 'chatbot' ? 'border-l-4 border-l-[#25D366]' : '';
             return (
-              <div key={key} className={`${cardClass} ${style.card}`}>
+              <div key={key} className={`${cardClass} ${style.card} ${chanAccent}`}>
                 {/* Card header */}
                 <div className="flex items-center justify-between gap-1">
                   {order.isLocal ? (
@@ -212,7 +224,17 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
                       📦 #{order.ticketNumber}
                     </span>
                   ) : (
-                    <span className="text-white text-sm font-black">#{order.ticketNumber}</span>
+                    <span className="text-white text-sm font-black flex items-center gap-1">
+                      {order.channel === 'chatbot' && (
+                        <span
+                          className="text-[9px] font-bold px-1 py-0.5 rounded bg-[#25D366]/20 text-[#25D366] leading-none"
+                          title="Pedido por WhatsApp"
+                        >
+                          🤖
+                        </span>
+                      )}
+                      #{order.ticketNumber}
+                    </span>
                   )}
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 shrink-0 ${style.badge}`}>
                     <span className={`w-1 h-1 rounded-full inline-block ${style.dot}`} />

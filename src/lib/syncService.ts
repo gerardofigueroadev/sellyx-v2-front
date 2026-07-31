@@ -1,8 +1,12 @@
 import {
   getPendingOrders, markOrderSynced, incrementRetry, getPendingCount,
   getKitchenCompletedToSync, markKitchenCompleteSynced, getKitchenCompletedPendingCount,
+  upsertServerKitchenOrder,
 } from './db';
 import { isTauri } from './isTauri';
+
+/** Evento que avisa a la cola de cocina que ingresaron pedidos nuevos (pull). */
+export const KITCHEN_UPDATED_EVENT = 'sellyx:kitchen-updated';
 
 export type SyncStatus = 'online' | 'offline' | 'syncing';
 
@@ -128,6 +132,58 @@ export async function syncPendingCompletes(
       reintented,
     });
   }
+}
+
+/**
+ * PULL de pedidos digitales (WhatsApp/web) del servidor hacia la cola de cocina
+ * local. Complementa el sync push-only: estos pedidos NACEN en el servidor (link
+ * público) y de otro modo nunca llegarían al POS. Idempotente (INSERT OR IGNORE
+ * por PK chatbot-<id>). Al ingresar alguno nuevo, emite un evento para que la UI
+ * de cocina se refresque. Solo Tauri (la cola vive en SQLite local).
+ */
+export async function pullKitchenOrders(
+  getToken: () => Promise<string | null>,
+  apiBase: string,
+  isTauriEnv: boolean,
+): Promise<void> {
+  if (!navigator.onLine || !isTauriEnv) return;
+
+  const token = await getToken();
+  if (!token) return;
+
+  // Acotar a los pedidos del turno actual (evita arrastrar histórico). El POS
+  // guarda el turno activo en localStorage; usamos su apertura como `since`.
+  let sinceTs = 0;
+  try {
+    const raw = localStorage.getItem('pos_active_shift');
+    if (raw) {
+      const shift = JSON.parse(raw);
+      const opened = shift?.openedAt ? new Date(shift.openedAt).getTime() : 0;
+      if (opened > 0) sinceTs = opened;
+    }
+  } catch { /* sin turno guardado: sin filtro since */ }
+
+  try {
+    const qs = sinceTs > 0 ? `?since=${sinceTs}` : '';
+    const res = await fetch(`${apiBase}/orders/kitchen-pending${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return;
+    const orders = await res.json();
+    if (!Array.isArray(orders) || orders.length === 0) return;
+
+    let inserted = 0;
+    for (const o of orders) {
+      try {
+        const isNew = await upsertServerKitchenOrder(o);
+        if (isNew) inserted++;
+      } catch { /* un pedido corrupto no debe frenar el resto */ }
+    }
+    if (inserted > 0) {
+      window.dispatchEvent(new CustomEvent(KITCHEN_UPDATED_EVENT));
+    }
+  } catch { /* red intermitente: la próxima vuelta reintenta */ }
 }
 
 export async function syncPendingReorders(
@@ -256,6 +312,8 @@ export function startSyncService(
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
     await syncPendingSettings(getToken, apiBase).catch(() => {});
     await syncPendingReorders(getToken, apiBase).catch(() => {});
+    // Pull de pedidos WhatsApp/web hacia la cola de cocina (cada 30s, junto al ciclo).
+    await pullKitchenOrders(getToken, apiBase, tauri).catch(() => {});
   };
 
   trySyncNow = trySync;

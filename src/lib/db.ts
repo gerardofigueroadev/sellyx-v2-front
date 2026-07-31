@@ -16,6 +16,9 @@ export interface OutboxOrder {
   kitchen_status: 'pending' | 'completed' | 'cancelled';
   kitchen_completed_at: number | null;
   kitchen_synced: number;
+  // Canal de origen del pedido. 'pos' (venta local) o 'chatbot'/'web' (link
+  // público, ingeridos por pull del servidor). Default 'pos' para filas viejas.
+  channel?: string | null;
 }
 
 let _db: Database | null = null;
@@ -55,6 +58,8 @@ async function getDb(): Promise<Database> {
   await ensureColumn(_db, 'orders_outbox', 'kitchen_status', `kitchen_status TEXT NOT NULL DEFAULT 'pending'`);
   await ensureColumn(_db, 'orders_outbox', 'kitchen_completed_at', `kitchen_completed_at INTEGER`);
   await ensureColumn(_db, 'orders_outbox', 'kitchen_synced', `kitchen_synced INTEGER NOT NULL DEFAULT 0`);
+  // Canal de origen (aditivo, retrocompat). Filas existentes → 'pos'.
+  await ensureColumn(_db, 'orders_outbox', 'channel', `channel TEXT DEFAULT 'pos'`);
 
   // CRÍTICO: tras agregar la columna `kitchen_status` con DEFAULT 'pending',
   // TODAS las filas existentes (incluyendo órdenes ya completadas hace días)
@@ -166,6 +171,54 @@ export async function getPendingKitchenOrders(sinceTs?: number): Promise<OutboxO
   return db.select<OutboxOrder[]>(
     `SELECT * FROM orders_outbox WHERE kitchen_status = 'pending' ORDER BY created_at ASC`,
   );
+}
+
+/**
+ * Ingresa (UPSERT idempotente) un pedido digital (WhatsApp/web) que vino del
+ * servidor a la cola de cocina local. PK estable `chatbot-<serverId>` → un
+ * INSERT OR IGNORE nunca lo duplica aunque el pull lo traiga muchas veces.
+ * Nace ya sincronizado (synced=1, server_id) porque se creó en el servidor; su
+ * "Listo" se replicará con PATCH /orders/:server_id/complete como cualquier otro.
+ * Devuelve true si insertó una fila nueva (para saber si hay que refrescar UI).
+ */
+export async function upsertServerKitchenOrder(o: {
+  id: number;
+  orderNumber?: string;
+  ticketNumber: number;
+  channel?: string | null;
+  orderType?: string | null;
+  notes?: string | null;
+  total?: number;
+  createdAt: string | number;
+  items: { name: string; emoji?: string | null; quantity: number; notes?: string | null }[];
+}): Promise<boolean> {
+  const db = await getDb();
+  const localId = `chatbot-${o.id}`;
+  const createdMs = typeof o.createdAt === 'number' ? o.createdAt : new Date(o.createdAt).getTime();
+  // Payload con la misma forma que espera KitchenStrip (orderNumber, ticketNumber,
+  // items[{productName/name, quantity, notes}], channel).
+  const payload = {
+    orderNumber: o.orderNumber ?? localId,
+    ticketNumber: o.ticketNumber,
+    channel: o.channel ?? 'chatbot',
+    orderType: o.orderType ?? null,
+    notes: o.notes ?? null,
+    total: o.total ?? 0,
+    items: (o.items ?? []).map((it) => ({
+      productName: it.name,
+      emoji: it.emoji ?? null,
+      quantity: it.quantity,
+      notes: it.notes ?? null,
+    })),
+  };
+  const res = await db.execute(
+    `INSERT OR IGNORE INTO orders_outbox
+       (local_id, payload, created_at, synced, server_id, kitchen_status, kitchen_synced, channel)
+     VALUES (?, ?, ?, 1, ?, 'pending', 0, ?)`,
+    [localId, JSON.stringify(payload), createdMs, o.id, o.channel ?? 'chatbot'],
+  );
+  // rowsAffected > 0 → se insertó (no existía). En reintentos el IGNORE lo salta.
+  return (res.rowsAffected ?? 0) > 0;
 }
 
 /** Marca la orden como completada localmente. La UI se actualiza al toque. */

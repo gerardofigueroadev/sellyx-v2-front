@@ -4,7 +4,7 @@ import API_URL from '../config';
 const API = `${API_URL}/api`;
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
-interface Branch { id: number; name: string }
+interface Branch { id: number; name: string; whatsappPhone?: string; isOpen?: boolean }
 interface Ctx { orgName: string; currency: string; whatsappPhone: string; branches: Branch[] }
 interface Product { id: number; name: string; price: number; emoji: string | null; category: string | null }
 type OrderType = 'takeaway' | 'delivery';
@@ -20,7 +20,7 @@ function normalizePhone(raw: string): string {
   return digits.startsWith('591') ? digits.slice(3) : digits;
 }
 
-// ── Parseo de la URL: /order/:token?phone=... ─────────────────────────────────
+// ── Parseo de la URL: /order/:token?phone=...&branch=...&type=... ──────────────
 function parseUrl() {
   const parts = window.location.pathname.split('/').filter(Boolean); // ['order', '<token>']
   const token = parts[1] ?? '';
@@ -29,13 +29,17 @@ function parseUrl() {
   const rawType = qs.get('type');
   // Tipo preseleccionado desde el chat (solo takeaway/delivery son válidos aquí).
   const presetType: OrderType | null = rawType === 'delivery' || rawType === 'takeaway' ? rawType : null;
-  return { token, phone, presetType };
+  // Sucursal preseleccionada por el link (?branch=3). Si el bot ya sabe la
+  // sucursal, salta el paso de elegirla. El backend valida que sea de la org.
+  const rawBranch = qs.get('branch');
+  const presetBranchId = rawBranch && /^\d+$/.test(rawBranch) ? Number(rawBranch) : null;
+  return { token, phone, presetType, presetBranchId };
 }
 
 const money = (n: number, cur: string) => `${n.toFixed(2)}${cur ? ' ' + cur : ''}`;
 
 export default function OrderPublicPage() {
-  const { token, phone: phoneFromLink, presetType } = useMemo(parseUrl, []);
+  const { token, phone: phoneFromLink, presetType, presetBranchId } = useMemo(parseUrl, []);
 
   const [ctx, setCtx] = useState<Ctx | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -50,6 +54,9 @@ export default function OrderPublicPage() {
   // Si delivery vino del chat, el pago arranca en QR (delivery solo paga QR).
   const [payment, setPayment] = useState<PaymentMethod>(presetType === 'delivery' ? 'qr' : 'cash');
   const [phone, setPhone] = useState(phoneFromLink);
+  const [name, setName] = useState('');
+  const [address, setAddress] = useState('');
+  const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -57,8 +64,8 @@ export default function OrderPublicPage() {
   // 'idle'    → aún no se pidió el QR
   // 'loading' → generando el QR con BISA
   // 'showing' → QR visible, esperando el pago (polling)
-  // 'paying'  → detectado el pago, creando el pedido
-  // 'paid'    → pedido creado, redirigiendo a WhatsApp
+  // 'paying'  → detectado el pago, confirmando (el backend crea el pedido)
+  // 'paid'    → pedido confirmado
   // 'error'   → no se pudo generar el QR
   const [qrPay, setQrPay] = useState<'idle' | 'loading' | 'showing' | 'paying' | 'paid' | 'error'>('idle');
   const [qrImg, setQrImg] = useState<string | null>(null);
@@ -80,15 +87,20 @@ export default function OrderPublicPage() {
         if (!res.ok) throw new Error('no encontrado');
         const data: Ctx = await res.json();
         setCtx(data);
-        // Si solo hay una sucursal, saltar el paso de selección.
-        if (data.branches.length === 1) {
-          setBranch(data.branches[0]);
+        // Preselección de sucursal: por ?branch= del link, o auto si hay una sola.
+        // Solo saltamos el paso de elegir si la sucursal está ABIERTA (turno POS
+        // activo). Si está cerrada, dejamos el paso 'branch' para mostrar su estado.
+        const preset = presetBranchId != null
+          ? data.branches.find((b) => b.id === presetBranchId)
+          : (data.branches.length === 1 ? data.branches[0] : undefined);
+        if (preset && preset.isOpen !== false) {
+          setBranch(preset);
         }
       } catch {
         setLoadErr('Este enlace no es válido o ya no está disponible.');
       }
     })();
-  }, [token]);
+  }, [token, presetBranchId]);
 
   // Cuando ya hay branch seleccionada (auto o manual), cargar productos y avanzar.
   useEffect(() => {
@@ -131,28 +143,42 @@ export default function OrderPublicPage() {
   const inc = (id: number) => setQty((q) => ({ ...q, [id]: (q[id] ?? 0) + 1 }));
   const dec = (id: number) => setQty((q) => ({ ...q, [id]: Math.max(0, (q[id] ?? 0) - 1) }));
 
-  // Crea el pedido. Devuelve true si se creó. `goConfirm` controla si navega
-  // a la pantalla de confirmación (efectivo) o no (QR maneja su propio flujo).
-  const submit = async (goConfirm = true): Promise<boolean> => {
-    if (!branch || cartItems.length === 0 || phone.trim().length < 5) return false;
+  // Validación de los datos del cliente antes de enviar/pagar.
+  const dataError = (): string | null => {
+    if (phone.trim().length < 5) return 'Ingresa un teléfono válido.';
+    if (name.trim().length < 2) return 'Ingresa tu nombre.';
+    if (orderType === 'delivery' && address.trim().length < 5) return 'Ingresa la dirección de entrega.';
+    return null;
+  };
+
+  // Payload común de datos del pedido (para crear orden efectivo o generar QR).
+  const orderPayload = () => ({
+    branchId: branch?.id,
+    phone: phone.trim(),
+    name: name.trim() || undefined,
+    address: orderType === 'delivery' ? address.trim() || undefined : undefined,
+    notes: notes.trim() || undefined,
+    items: cartItems.map((p) => ({ productId: p.id, quantity: qty[p.id] })),
+    orderType,
+  });
+
+  // Crea el pedido EN EFECTIVO (el flujo QR NO usa esto: el backend crea la orden
+  // en el callback de pago). Devuelve true si se creó.
+  const submitCash = async (): Promise<boolean> => {
+    const err = dataError();
+    if (!branch || cartItems.length === 0 || err) { setSubmitErr(err); return false; }
     setSubmitting(true);
     setSubmitErr(null);
     try {
       const res = await fetch(`${API}/public/order/${token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branchId: branch.id,
-          phone: phone.trim(),
-          items: cartItems.map((p) => ({ productId: p.id, quantity: qty[p.id] })),
-          orderType,
-          paymentMethod: payment,
-        }),
+        body: JSON.stringify({ ...orderPayload(), paymentMethod: 'cash' }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'No se pudo crear el pedido');
       setConfirmation({ orderNumber: data.orderNumber, ticketNumber: data.ticketNumber, total: data.total });
-      if (goConfirm) setStep('confirm');
+      setStep('confirm');
       return true;
     } catch (e) {
       setSubmitErr((e as Error).message);
@@ -162,19 +188,41 @@ export default function OrderPublicPage() {
     }
   };
 
-  // Al detectar el pago del QR: crea el pedido, muestra "Pagado" y abre WhatsApp.
+  // Al detectar el pago del QR: el pedido YA lo creó el backend en el callback.
+  // Aquí solo recuperamos los datos de confirmación y mostramos la pantalla final
+  // con descarga de comprobante. Reintentamos un par de veces porque el callback
+  // puede tardar un instante en crear la orden tras marcar el pago.
   const onQrPaid = async () => {
     setQrPay('paying');
-    const ok = await submit(false); // crea el pedido sin navegar a 'confirm'
-    if (!ok) { setQrPay('showing'); return; } // reintentable: el QR sigue pagado
+    const info = await fetchQrOrder(qrAlias);
+    if (info) setConfirmation(info);
     setQrPay('paid');
-    setTimeout(() => {
-      const waPhone = ctx?.whatsappPhone;
-      window.location.href = waPhone ? `https://wa.me/${waPhone}` : 'https://wa.me/';
-    }, 2000);
+    setStep('confirm');
   };
 
-  // Genera el QR de pago con BISA al entrar al paso qr_pending.
+  // Recupera la orden creada a partir del QR pagado (con reintentos cortos).
+  const fetchQrOrder = async (alias: string | null): Promise<Confirmation | null> => {
+    if (!alias) return null;
+    for (let i = 0; i < 5; i++) {
+      try {
+        const res = await fetch(`${API}/public/order/${token}/qr/${alias}/order`);
+        if (res.ok) {
+          const d = await res.json();
+          if (d?.orderNumber) {
+            return { orderNumber: d.orderNumber, ticketNumber: d.ticketNumber, total: d.total };
+          }
+        }
+      } catch {
+        // reintentar
+      }
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    return null;
+  };
+
+  // Genera el QR de pago con BISA al entrar al paso qr_pending. Enviamos TODOS
+  // los datos del pedido para que el backend pueda CREAR la orden cuando el pago
+  // entre (aunque el cliente cierre esta pestaña).
   const generateQr = async () => {
     setQrPay('loading');
     setQrErr(null);
@@ -184,11 +232,7 @@ export default function OrderPublicPage() {
       const res = await fetch(`${API}/public/order/${token}/qr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: cartItems.map((p) => ({ productId: p.id, quantity: qty[p.id] })),
-          // Sucursal elegida, para ver el cobro por sucursal en el admin.
-          branchId: branch?.id,
-        }),
+        body: JSON.stringify(orderPayload()),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'No se pudo generar el QR');
@@ -239,6 +283,47 @@ export default function OrderPublicPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qrPay, qrAlias, token]);
 
+  // URL del comprobante PNG (descarga / compartir).
+  const receiptUrl = confirmation
+    ? `${API}/public/order/${token}/receipt/${encodeURIComponent(confirmation.orderNumber)}`
+    : '';
+
+  // WhatsApp de la sucursal elegida (fallback al de la org/bot).
+  const shareWhatsappPhone = branch?.whatsappPhone || ctx?.whatsappPhone || '';
+
+  // Descarga el comprobante como archivo.
+  const downloadReceipt = async () => {
+    if (!receiptUrl) return;
+    try {
+      const res = await fetch(receiptUrl);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `comprobante-${confirmation?.ticketNumber ?? 'pedido'}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback: abrir en una pestaña para guardar manualmente.
+      window.open(receiptUrl, '_blank');
+    }
+  };
+
+  // Comparte el comprobante por el WhatsApp de la sucursal. Adjuntar imágenes por
+  // wa.me no es posible; enviamos un texto con el N° de pedido para que el cliente
+  // lo confirme con la sucursal (y ya descargó/descarga la imagen aparte).
+  const shareOnWhatsapp = () => {
+    const msg = encodeURIComponent(
+      `Hola! Mi pedido *#${confirmation?.ticketNumber}* (${confirmation?.orderNumber}). Adjunto mi comprobante.`,
+    );
+    const url = shareWhatsappPhone
+      ? `https://wa.me/${shareWhatsappPhone}?text=${msg}`
+      : `https://wa.me/?text=${msg}`;
+    window.open(url, '_blank');
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
   if (loadErr) return <Shell><Centered>{loadErr}</Centered></Shell>;
   if (!ctx) return <Shell><Centered><Spinner /></Centered></Shell>;
@@ -254,13 +339,26 @@ export default function OrderPublicPage() {
       {step === 'branch' && (
         <Card>
           <h2 className="text-white font-semibold mb-3">Elige la sucursal</h2>
+          {ctx.branches.every((b) => b.isOpen === false) && (
+            <p className="text-amber-400 text-sm mb-3 bg-amber-500/10 rounded-xl px-3 py-2">
+              🕘 Por ahora no hay sucursales abiertas para recibir pedidos. Intenta más tarde.
+            </p>
+          )}
           <div className="space-y-2">
-            {ctx.branches.map((b) => (
-              <button key={b.id} onClick={() => setBranch(b)}
-                className="w-full text-left px-4 py-3 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-white transition border border-slate-600">
-                {b.name}
-              </button>
-            ))}
+            {ctx.branches.map((b) => {
+              const closed = b.isOpen === false;
+              return (
+                <button key={b.id} onClick={() => !closed && setBranch(b)} disabled={closed}
+                  className={`w-full text-left px-4 py-3 rounded-xl border flex items-center justify-between transition ${
+                    closed
+                      ? 'bg-slate-800/40 border-slate-700 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-700/60 hover:bg-slate-700 text-white border-slate-600'
+                  }`}>
+                  <span>{b.name}</span>
+                  {closed && <span className="text-[11px] font-medium text-slate-500">Cerrado</span>}
+                </button>
+              );
+            })}
           </div>
         </Card>
       )}
@@ -418,10 +516,31 @@ export default function OrderPublicPage() {
             </div>
             {orderType === 'delivery' && <p className="text-slate-500 text-xs mb-3">El delivery solo admite pago con QR.</p>}
 
+            {/* Nombre */}
+            <h3 className="text-white text-sm font-medium mb-2 mt-3">Tu nombre</h3>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Juan Pérez"
+              className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+
             {/* Teléfono */}
             <h3 className="text-white text-sm font-medium mb-2 mt-3">Tu teléfono</h3>
             <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Ej: 59178590523"
               className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+
+            {/* Dirección (solo delivery) */}
+            {orderType === 'delivery' && (
+              <>
+                <h3 className="text-white text-sm font-medium mb-2 mt-3">Dirección de entrega</h3>
+                <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2}
+                  placeholder="Calle, número, zona y una referencia"
+                  className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none" />
+              </>
+            )}
+
+            {/* Notas */}
+            <h3 className="text-white text-sm font-medium mb-2 mt-3">Notas <span className="text-slate-500 font-normal">(opcional)</span></h3>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+              placeholder="Ej: sin cebolla, incluir cubiertos…"
+              className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none" />
 
             {/* Resumen */}
             <div className="mt-4 bg-slate-700/30 rounded-xl p-3 space-y-1">
@@ -441,8 +560,13 @@ export default function OrderPublicPage() {
           <StickyBar>
             <div className="text-white text-sm font-bold">{money(total, cur)}</div>
             <button
-              onClick={() => (payment === 'qr' ? setStep('qr_pending') : submit())}
-              disabled={submitting || phone.trim().length < 5}
+              onClick={() => {
+                const err = dataError();
+                if (err) { setSubmitErr(err); return; }
+                setSubmitErr(null);
+                payment === 'qr' ? setStep('qr_pending') : submitCash();
+              }}
+              disabled={submitting}
               className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-2 rounded-xl text-sm font-medium flex items-center gap-2">
               {submitting && <Spinner small />}
               {payment === 'qr' ? 'Continuar al pago' : 'Confirmar pedido'}
@@ -476,9 +600,14 @@ export default function OrderPublicPage() {
             </div>
 
             {qrPay === 'showing' && (
-              <p className="text-slate-500 text-xs mt-4 flex items-center justify-center gap-2">
-                <Spinner small /> Esperando el pago...
-              </p>
+              <>
+                <p className="text-slate-500 text-xs mt-4 flex items-center justify-center gap-2">
+                  <Spinner small /> Esperando el pago...
+                </p>
+                <p className="text-slate-600 text-[11px] mt-2 px-4">
+                  Tu pedido se registra automáticamente al confirmarse el pago, aunque cierres esta ventana.
+                </p>
+              </>
             )}
             {qrPay === 'error' && (
               <button
@@ -491,23 +620,12 @@ export default function OrderPublicPage() {
         </Card>
       )}
 
-      {/* Popup de confirmación de pago QR */}
-      {(qrPay === 'paying' || qrPay === 'paid') && (
+      {/* Popup mientras se confirma el pago QR (el backend crea el pedido) */}
+      {qrPay === 'paying' && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-xs w-full text-center">
-            {qrPay === 'paying' ? (
-              <>
-                <Spinner />
-                <p className="text-white text-sm mt-3">Confirmando tu pago...</p>
-              </>
-            ) : (
-              <>
-                <div className="text-5xl mb-2">✅</div>
-                <h3 className="text-white font-bold text-lg">¡Pagado!</h3>
-                <p className="text-slate-400 text-sm mt-1">Tu pedido fue registrado.</p>
-                <p className="text-slate-500 text-xs mt-3">Abriendo WhatsApp...</p>
-              </>
-            )}
+            <Spinner />
+            <p className="text-white text-sm mt-3">Confirmando tu pago...</p>
           </div>
         </div>
       )}
@@ -516,7 +634,9 @@ export default function OrderPublicPage() {
         <Card>
           <div className="text-center py-4">
             <div className="text-5xl mb-3">✅</div>
-            <h2 className="text-white font-bold text-lg">¡Pedido enviado!</h2>
+            <h2 className="text-white font-bold text-lg">
+              {payment === 'qr' ? '¡Pago recibido!' : '¡Pedido enviado!'}
+            </h2>
             <p className="text-slate-400 text-sm mt-1">Tu pedido fue recibido por {ctx.orgName}.</p>
             <div className="mt-4 bg-slate-700/40 rounded-xl p-4 inline-block">
               <p className="text-slate-400 text-xs">N° de pedido</p>
@@ -524,6 +644,23 @@ export default function OrderPublicPage() {
               <p className="text-emerald-400 text-2xl font-bold mt-2">#{confirmation.ticketNumber}</p>
               <p className="text-white text-sm mt-2">Total: {money(confirmation.total, cur)}</p>
             </div>
+
+            {/* Comprobante: previsualización + descarga + compartir por WhatsApp */}
+            <div className="mt-5">
+              <img src={receiptUrl} alt="Comprobante"
+                className="mx-auto max-w-[220px] w-full rounded-lg border border-slate-700 bg-white" />
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <button onClick={downloadReceipt}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl text-sm font-medium">
+                ⬇️ Descargar comprobante
+              </button>
+              <button onClick={shareOnWhatsapp}
+                className="w-full bg-[#25D366] hover:brightness-95 text-white py-2.5 rounded-xl text-sm font-medium">
+                Compartir por WhatsApp
+              </button>
+            </div>
+
             <p className="text-slate-500 text-xs mt-4">Ya puedes cerrar esta ventana.</p>
           </div>
         </Card>
