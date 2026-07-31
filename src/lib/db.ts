@@ -155,21 +155,35 @@ export async function getServerIdForLocalId(localId: string): Promise<number | n
 
 /**
  * Órdenes pendientes de cocinar — fuente de verdad de la cola, sin tocar red.
- * Acotada por `sinceTs` (createdAt mínimo) para no mostrar tickets viejos
- * de turnos cerrados / días anteriores aunque queden vivos en SQLite.
+ * Acotada por:
+ *  - `sinceTs` (createdAt mínimo): no arrastra tickets de turnos/días anteriores.
+ *    Aplica a TODOS los canales (incluidos los pedidos WhatsApp): así un pedido
+ *    olvidado sin cerrar de hace días NO reaparece al abrir una caja nueva.
+ *  - `branchId`: solo la sucursal activa. Los pedidos digitales ingeridos del
+ *    servidor traen su branch en el payload; filtramos por él para que un pedido
+ *    de OTRA sucursal (que quedó en el SQLite local de un pull anterior) no se
+ *    muestre en la caja equivocada.
  */
-export async function getPendingKitchenOrders(sinceTs?: number): Promise<OutboxOrder[]> {
+export async function getPendingKitchenOrders(sinceTs?: number, branchId?: number | null): Promise<OutboxOrder[]> {
   const db = await getDb();
+  const conds: string[] = [`kitchen_status = 'pending'`];
+  const params: any[] = [];
+
   if (sinceTs && sinceTs > 0) {
-    return db.select<OutboxOrder[]>(
-      `SELECT * FROM orders_outbox
-        WHERE kitchen_status = 'pending' AND created_at >= ?
-        ORDER BY created_at ASC`,
-      [sinceTs],
-    );
+    conds.push(`created_at >= ?`);
+    params.push(sinceTs);
   }
+  // Filtro por sucursal: las ventas del POS local no llevan branchId en el payload
+  // (son de la caja actual por definición), así que solo exigimos coincidencia de
+  // branch a los pedidos que SÍ lo traen (los digitales ingeridos del servidor).
+  if (branchId != null) {
+    conds.push(`(json_extract(payload, '$.branchId') IS NULL OR json_extract(payload, '$.branchId') = ?)`);
+    params.push(branchId);
+  }
+
   return db.select<OutboxOrder[]>(
-    `SELECT * FROM orders_outbox WHERE kitchen_status = 'pending' ORDER BY created_at ASC`,
+    `SELECT * FROM orders_outbox WHERE ${conds.join(' AND ')} ORDER BY created_at ASC`,
+    params,
   );
 }
 
@@ -185,6 +199,7 @@ export async function upsertServerKitchenOrder(o: {
   id: number;
   orderNumber?: string;
   ticketNumber: number;
+  branchId?: number | null;
   channel?: string | null;
   orderType?: string | null;
   notes?: string | null;
@@ -196,10 +211,13 @@ export async function upsertServerKitchenOrder(o: {
   const localId = `chatbot-${o.id}`;
   const createdMs = typeof o.createdAt === 'number' ? o.createdAt : new Date(o.createdAt).getTime();
   // Payload con la misma forma que espera KitchenStrip (orderNumber, ticketNumber,
-  // items[{productName/name, quantity, notes}], channel).
+  // items[{productName/name, quantity, notes}], channel). Incluye branchId para
+  // que la cola filtre por sucursal (no mostrar pedidos de otra sucursal que
+  // quedaron en el SQLite local de un pull anterior).
   const payload = {
     orderNumber: o.orderNumber ?? localId,
     ticketNumber: o.ticketNumber,
+    branchId: o.branchId ?? null,
     channel: o.channel ?? 'chatbot',
     orderType: o.orderType ?? null,
     notes: o.notes ?? null,

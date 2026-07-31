@@ -151,25 +151,18 @@ export async function pullKitchenOrders(
   const token = await getToken();
   if (!token) return;
 
-  // Acotar a los pedidos del turno actual (evita arrastrar histórico). El POS
-  // guarda el turno activo en localStorage; usamos su apertura como `since`.
-  let sinceTs = 0;
+  // Sucursal activa: imprescindible para el ADMIN (su token no trae branchId, y
+  // sin esto el endpoint devuelve []). El cajero la manda igual (el backend la
+  // ignora y usa la de su token). NO enviamos `since`: el backend ya filtra por
+  // pending + sucursal + canal digital, que es suficiente.
+  const branchId = localStorage.getItem('pos_active_branch');
   try {
-    const raw = localStorage.getItem('pos_active_shift');
-    if (raw) {
-      const shift = JSON.parse(raw);
-      const opened = shift?.openedAt ? new Date(shift.openedAt).getTime() : 0;
-      if (opened > 0) sinceTs = opened;
-    }
-  } catch { /* sin turno guardado: sin filtro since */ }
-
-  try {
-    const qs = sinceTs > 0 ? `?since=${sinceTs}` : '';
+    const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
     const res = await fetch(`${apiBase}/orders/kitchen-pending${qs}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return;
+    if (!res.ok) { console.warn('[KITCHEN-PULL] HTTP', res.status); return; }
     const orders = await res.json();
     if (!Array.isArray(orders) || orders.length === 0) return;
 
@@ -180,7 +173,9 @@ export async function pullKitchenOrders(
         if (isNew) inserted++;
       } catch { /* un pedido corrupto no debe frenar el resto */ }
     }
-    if (inserted > 0) {
+    // Refrescamos la UI si trajimos pedidos (aunque rowsAffected no reporte
+    // inserciones nuevas): garantiza que la cola se pinte tras el primer pull.
+    if (inserted > 0 || orders.length > 0) {
       window.dispatchEvent(new CustomEvent(KITCHEN_UPDATED_EVENT));
     }
   } catch { /* red intermitente: la próxima vuelta reintenta */ }

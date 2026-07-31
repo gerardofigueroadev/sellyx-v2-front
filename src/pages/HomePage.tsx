@@ -58,7 +58,7 @@ function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertical = false, products = [], shiftOpenedAt }: {
+function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false, products = [], shiftOpenedAt }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
   warningMins: number; dangerMins: number; vertical?: boolean;
   products?: ApiProduct[];
@@ -82,7 +82,7 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
       const sinceTs = shiftOpenedAt
         ? new Date(shiftOpenedAt).getTime()
         : fallback24h;
-      const rows = await getPendingKitchenOrders(sinceTs);
+      const rows = await getPendingKitchenOrders(sinceTs, branchId);
       const mapped: KitchenOrder[] = rows.map(o => {
         let payload: any = {};
         try { payload = JSON.parse(o.payload); } catch {}
@@ -116,7 +116,7 @@ function KitchenStrip({ refreshKey, onComplete, warningMins, dangerMins, vertica
     } catch (e) {
       console.warn('[KITCHEN] load: SQLite read failed', String(e));
     }
-  }, [tauri, products, shiftOpenedAt]);
+  }, [tauri, products, shiftOpenedAt, branchId]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
@@ -692,6 +692,16 @@ export default function HomePage() {
       })
       .catch(() => {/* offline: mantener cache */});
   }, [token]);
+
+  // Persistir la sucursal activa para que el pull de cocina (syncService, fuera
+  // del contexto React) sepa qué sucursal consultar. Clave para el admin, que no
+  // tiene branchId fijo en su token: sin esto el endpoint devuelve [] (cae en el
+  // branchId nulo del admin). El cajero manda igual el suyo (el backend lo ignora
+  // y usa el del token).
+  useEffect(() => {
+    if (activeBranchId) localStorage.setItem('pos_active_branch', String(activeBranchId));
+    else localStorage.removeItem('pos_active_branch');
+  }, [activeBranchId]);
 
   // Servicio de sincronización offline (solo en Tauri)
   useEffect(() => {

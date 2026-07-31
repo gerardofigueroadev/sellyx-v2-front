@@ -315,9 +315,9 @@ export default function OrderPublicPage() {
   // wa.me no es posible; enviamos un texto con el N° de pedido para que el cliente
   // lo confirme con la sucursal (y ya descargó/descarga la imagen aparte).
   const shareOnWhatsapp = () => {
-    const msg = encodeURIComponent(
-      `Hola! Mi pedido *#${confirmation?.ticketNumber}* (${confirmation?.orderNumber}). Adjunto mi comprobante.`,
-    );
+    const base = `Hola! Mi pedido *#${confirmation?.ticketNumber}* (${confirmation?.orderNumber}). Adjunto mi comprobante.`;
+    const deliveryNote = orderType === 'delivery' ? ' Te comparto también mi ubicación 📍 para el delivery.' : '';
+    const msg = encodeURIComponent(base + deliveryNote);
     const url = shareWhatsappPhone
       ? `https://wa.me/${shareWhatsappPhone}?text=${msg}`
       : `https://wa.me/?text=${msg}`;
@@ -645,8 +645,21 @@ export default function OrderPublicPage() {
               <p className="text-white text-sm mt-2">Total: {money(confirmation.total, cur)}</p>
             </div>
 
+            {/* Aviso: pedirle al cliente que comparta el comprobante (y la
+                ubicación si es delivery) por WhatsApp con la sucursal. Va aquí
+                porque es el momento en que el cliente lo necesita. */}
+            <div className="mt-5 text-left bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3">
+              <p className="text-emerald-300 text-sm font-semibold mb-1">📩 Un último paso</p>
+              <p className="text-slate-300 text-xs leading-relaxed">
+                Descarga tu comprobante y <span className="font-semibold">compártelo por WhatsApp</span> con la sucursal para confirmar tu pedido.
+                {orderType === 'delivery' && (
+                  <> Como tu pedido es <span className="font-semibold">delivery</span> 🛵, envíanos también tu <span className="font-semibold">ubicación</span> 📍 para poder llegar.</>
+                )}
+              </p>
+            </div>
+
             {/* Comprobante: previsualización + descarga + compartir por WhatsApp */}
-            <div className="mt-5">
+            <div className="mt-4">
               <img src={receiptUrl} alt="Comprobante"
                 className="mx-auto max-w-[220px] w-full rounded-lg border border-slate-700 bg-white" />
             </div>
@@ -657,7 +670,7 @@ export default function OrderPublicPage() {
               </button>
               <button onClick={shareOnWhatsapp}
                 className="w-full bg-[#25D366] hover:brightness-95 text-white py-2.5 rounded-xl text-sm font-medium">
-                Compartir por WhatsApp
+                {orderType === 'delivery' ? 'Compartir comprobante + ubicación' : 'Compartir por WhatsApp'}
               </button>
             </div>
 
