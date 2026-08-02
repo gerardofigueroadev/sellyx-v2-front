@@ -247,8 +247,8 @@ function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMin
                   {order.items.map((item, i) => (
                     <div key={`${item.id ?? 'x'}-${i}`} className="flex items-center gap-1">
                       <span className="text-xs">{item.product?.emoji || '🍽️'}</span>
-                      <span className="text-slate-300 text-[11px] flex-1 truncate">{item.product?.name ?? '(eliminado)'}</span>
-                      <span className="text-white text-[11px] font-bold shrink-0">×{item.quantity}</span>
+                      <span className="text-slate-300 text-[11px] md:text-xs flex-1 truncate">{item.product?.name ?? '(eliminado)'}</span>
+                      <span className="text-white text-[11px] md:text-xs font-bold shrink-0">×{item.quantity}</span>
                     </div>
                   ))}
                 </div>
@@ -257,7 +257,7 @@ function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMin
                 <button
                   onClick={() => complete(order)}
                   disabled={completing === key}
-                  className="w-full bg-slate-700/80 hover:bg-green-600 text-slate-300 hover:text-white text-[11px] font-semibold py-1 rounded transition disabled:opacity-50">
+                  className="w-full bg-slate-700/80 hover:bg-green-600 active:bg-green-600 text-slate-300 hover:text-white text-[11px] md:text-xs font-semibold py-1 md:py-2 rounded transition disabled:opacity-50">
                   {completing === key ? '...' : '✓ Listo'}
                 </button>
               </div>
@@ -1111,8 +1111,10 @@ export default function HomePage() {
         />
       )}
 
-      {/* Content */}
-      <div className="flex flex-col lg:flex-row" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
+      {/* Content — dos columnas (productos | carrito) desde md (tablet 768px+);
+          apilado solo en pantallas muy chicas. Antes era lg (1024px), lo que en
+          tablet comprimía el carrito y cortaba el botón de cobrar. */}
+      <div className="flex flex-col md:flex-row" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
 
         {/* ── Área de productos ── */}
         <div style={{ flex: '1 1 0%', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1252,7 +1254,7 @@ export default function HomePage() {
 
         {/* ── Cola de cocina vertical (columna entre productos y cart) ── */}
         {token && !!orgSettings.showKitchenStrip && orgSettings.kitchenStripPosition === 'right' && (
-          <div className="hidden lg:flex w-48 xl:w-56 shrink-0 flex-col border-l border-slate-700/50 overflow-hidden">
+          <div className="hidden md:flex w-44 lg:w-48 xl:w-56 shrink-0 flex-col border-l border-slate-700/50 overflow-hidden">
             <KitchenStrip
               token={token}
               refreshKey={kitchenKey}
@@ -1268,7 +1270,7 @@ export default function HomePage() {
         )}
 
         {/* ── Columna derecha: topbar + Cart ── */}
-        <div className="w-full lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] lg:max-h-none border-t lg:border-t-0 lg:border-l border-slate-700/50 overflow-hidden">
+        <div className="w-full md:w-60 lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] md:max-h-none border-t md:border-t-0 md:border-l border-slate-700/50 overflow-hidden">
 
           {/* Topbar compacta */}
           <div className="px-3 py-2 border-b border-slate-700/50 bg-slate-800/60 shrink-0 space-y-1.5">
