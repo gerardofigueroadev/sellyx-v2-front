@@ -56,7 +56,7 @@ interface AuthContextType {
   // Branch selection (admin with multiple branches)
   branches: Branch[];
   activeBranchId: number | null;
-  setActiveBranchId: (id: number) => void;
+  setActiveBranchId: (next: number | null | ((prev: number | null) => number | null)) => void;
   /** Recarga la lista de sucursales (llamar tras crear/editar una sucursal). */
   refreshBranches: () => Promise<void>;
 }
@@ -73,12 +73,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try { return JSON.parse(localStorage.getItem('pos_branches') ?? '[]'); }
     catch { return []; }
   });
-  const [activeBranchId, setActiveBranchId] = useState<number | null>(() => {
+  const [activeBranchId, setActiveBranchIdRaw] = useState<number | null>(() => {
+    // Cajero: su sucursal fija (branch en el user). Admin (branch null): recuperar
+    // la sucursal que tenía seleccionada antes de recargar (persistida), para que
+    // al refrescar NO se resetee y no se crucen los pedidos de otra sucursal.
     const stored = localStorage.getItem('user');
-    if (!stored) return null;
-    const u = JSON.parse(stored) as AuthUser;
-    return u.branch?.id ?? null;
+    const fixed = stored ? (JSON.parse(stored) as AuthUser).branch?.id ?? null : null;
+    if (fixed != null) return fixed; // cajero: siempre su sucursal
+    const persisted = localStorage.getItem('pos_active_branch');
+    return persisted ? Number(persisted) || null : null;
   });
+
+  // Persistir la sucursal activa en cada cambio (clave para el admin al recargar,
+  // y la usa el pull de cocina en web). El cajero la re-fija en su login. Acepta
+  // valor o updater (compat con los usos internos que pasan función).
+  const setActiveBranchId = useCallback((next: number | null | ((prev: number | null) => number | null)) => {
+    setActiveBranchIdRaw(prev => {
+      const resolved = typeof next === 'function' ? (next as any)(prev) : next;
+      if (resolved != null) localStorage.setItem('pos_active_branch', String(resolved));
+      else localStorage.removeItem('pos_active_branch');
+      return resolved;
+    });
+  }, []);
   const [currency, setCurrency]                       = useState<string>(loadCurrency);
   const [enabledPaymentMethods, setEnabledPaymentMethods] = useState<string[]>(loadPaymentMethods);
 
