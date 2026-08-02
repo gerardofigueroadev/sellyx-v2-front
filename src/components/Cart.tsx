@@ -239,20 +239,19 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
           <span className="text-white font-bold text-lg">{currency} {total.toFixed(2)}</span>
         </div>
 
-        {/* Tipo de orden */}
+        {/* Tipo de orden — solo texto centrado (sin iconos) */}
         <div className="grid grid-cols-2 gap-2">
-          {([['dine_in', '🍽️', 'Mesa'], ['takeaway', '🥡', 'Para llevar']] as const).map(([key, emoji, label]) => (
+          {([['dine_in', 'Mesa'], ['takeaway', 'Para llevar']] as const).map(([key, label]) => (
             <button
               key={key}
               onClick={() => setOrderType(key)}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition ${
+              className={`flex items-center justify-center py-2 rounded-xl border text-sm font-medium transition ${
                 orderType === key
                   ? 'bg-amber-600/20 border-amber-500 text-amber-400'
                   : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
               }`}
             >
-              <span className="text-base">{emoji}</span>
-              <span>{label}</span>
+              {label}
             </button>
           ))}
         </div>
@@ -266,14 +265,13 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
                 <button
                   key={opt.key}
                   onClick={() => setPaymentMethod(opt.key)}
-                  className={`flex items-center justify-center gap-1.5 xl:flex-col xl:gap-1 py-2 xl:py-2.5 px-2 rounded-xl border text-xs font-medium transition ${
+                  className={`flex items-center justify-center py-2 xl:py-2.5 px-2 rounded-xl border text-sm font-medium transition ${
                     activeMethod === opt.key
                       ? 'bg-blue-600/20 border-blue-500 text-blue-400'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
                   }`}
                 >
-                  <span className="text-base xl:text-lg">{opt.emoji}</span>
-                  <span>{opt.label}</span>
+                  {opt.label}
                 </button>
               ))}
             </div>

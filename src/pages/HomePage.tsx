@@ -1209,7 +1209,7 @@ export default function HomePage() {
               [1, 2, 3].map(n => (
                 <div key={n} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ height: 34, borderRadius: 10, background: 'rgba(51,65,85,0.4)', width: 140 }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 200px))', gap: 6 }}>
                     {[...Array(n === 1 ? 5 : 2)].map((_, i) => (
                       <div key={i} style={{ height: 72, borderRadius: 10, background: 'rgba(51,65,85,0.25)' }} />
                     ))}
@@ -1269,7 +1269,10 @@ export default function HomePage() {
                         {catProducts.filter(p => p.isAvailable).length}/{catProducts.length}
                       </span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 6 }}>
+                    {/* max 200px: las tarjetas no se estiran a lo ancho cuando la
+                        categoría tiene pocos productos (en vertical se veían como
+                        barras largas). Quedan parejas y caben más por fila. */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 200px))', gap: 6 }}>
                       {catProducts.map(p => (
                         <ProductCard
                           key={p.id} product={p} onAdd={handleAdd}
