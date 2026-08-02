@@ -1157,10 +1157,12 @@ export default function HomePage() {
         />
       )}
 
-      {/* Content — dos columnas (productos | carrito) desde md (tablet 768px+);
-          apilado solo en pantallas muy chicas. Antes era lg (1024px), lo que en
-          tablet comprimía el carrito y cortaba el botón de cobrar. */}
-      <div className="flex flex-col md:flex-row" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
+      {/* Content — dos columnas (productos | carrito) SOLO en horizontal
+          (landscape) o en pantalla ancha (lg, ≥1024px). En tablet VERTICAL
+          (portrait angosto) queda APILADO: productos a todo el ancho arriba,
+          carrito abajo → se ve grande, no comprimido. El desktop es siempre
+          landscape/ancho, así que no cambia. */}
+      <div className="flex flex-col landscape:flex-row lg:flex-row" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
 
         {/* ── Área de productos ── */}
         <div style={{ flex: '1 1 0%', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1300,7 +1302,7 @@ export default function HomePage() {
 
         {/* ── Cola de cocina vertical (columna entre productos y cart) ── */}
         {token && !!orgSettings.showKitchenStrip && orgSettings.kitchenStripPosition === 'right' && (
-          <div className="hidden md:flex w-44 lg:w-48 xl:w-56 shrink-0 flex-col border-l border-slate-700/50 overflow-hidden">
+          <div className="hidden landscape:flex lg:flex w-44 landscape:w-40 lg:w-48 xl:w-56 shrink-0 flex-col border-l border-slate-700/50 overflow-hidden">
             <KitchenStrip
               token={token}
               refreshKey={kitchenKey}
@@ -1316,7 +1318,7 @@ export default function HomePage() {
         )}
 
         {/* ── Columna derecha: topbar + Cart ── */}
-        <div className="w-full md:w-60 lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] md:max-h-none border-t md:border-t-0 md:border-l border-slate-700/50 overflow-hidden">
+        <div className="w-full landscape:w-56 lg:w-64 xl:w-80 2xl:w-96 shrink-0 flex flex-col max-h-[40vh] landscape:max-h-none lg:max-h-none border-t landscape:border-t-0 landscape:border-l lg:border-t-0 lg:border-l border-slate-700/50 overflow-hidden">
 
           {/* Topbar compacta */}
           <div className="px-3 py-2 border-b border-slate-700/50 bg-slate-800/60 shrink-0 space-y-1.5">
