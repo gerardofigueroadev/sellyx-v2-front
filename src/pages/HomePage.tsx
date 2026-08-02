@@ -58,7 +58,7 @@ function urgencyStyle(dateStr: string, warningMins = 5, dangerMins = 15) {
   return                      { card: 'border-red-500/40 bg-red-500/5',      badge: 'bg-red-500/20 text-red-400',      dot: 'bg-red-400 animate-pulse' };
 }
 
-function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false, products = [], shiftOpenedAt }: {
+function KitchenStrip({ token, refreshKey, onComplete, branchId, warningMins, dangerMins, vertical = false, products = [], shiftOpenedAt }: {
   token: string; refreshKey: number; onComplete: () => void; branchId: number | null;
   warningMins: number; dangerMins: number; vertical?: boolean;
   products?: ApiProduct[];
@@ -71,61 +71,95 @@ function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMin
   const [, setTick] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
 
-  // Cola local-first: lee del SQLite outbox, que es la fuente de verdad de cocina.
-  // No depende del servidor — el cajero ve la cola al instante incluso con red mala.
-  // Acotada al turno actual: si no hay turno, fallback a últimas 24h (defensa contra
-  // mostrar tickets viejos cuando se cierra y reabre la caja).
+  // ── Carga en DESKTOP (Tauri): local-first desde SQLite ──────────────────────
+  // Fuente de verdad de cocina; el cajero la ve al instante incluso con red mala.
+  // Acotada al turno actual (fallback 24h). NO se toca: el desktop sigue igual.
+  const loadTauri = useCallback(async () => {
+    const fallback24h = Date.now() - 24 * 60 * 60 * 1000;
+    const sinceTs = shiftOpenedAt ? new Date(shiftOpenedAt).getTime() : fallback24h;
+    const rows = await getPendingKitchenOrders(sinceTs, branchId);
+    const mapped: KitchenOrder[] = rows.map(o => {
+      let payload: any = {};
+      try { payload = JSON.parse(o.payload); } catch {}
+      const isUnsynced = o.synced === 0;
+      return {
+        id: o.server_id ?? 0,
+        localId: o.local_id,
+        isLocal: isUnsynced,
+        channel: o.channel ?? payload.channel ?? 'pos',
+        orderNumber: o.local_id.slice(0, 8).toUpperCase(),
+        ticketNumber: payload.ticketNumber ?? o.local_id.slice(0, 4).toUpperCase(),
+        createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
+        items: (payload.items ?? []).map((it: any) => {
+          const product = products.find(p => p.id === it.productId);
+          return {
+            id: it.productId,
+            quantity: it.quantity,
+            product: { name: it.productName ?? product?.name ?? '?', emoji: product?.emoji ?? '🍽️' },
+            notes: it.notes,
+          };
+        }),
+      };
+    });
+    setOrders(mapped);
+  }, [products, shiftOpenedAt, branchId]);
+
+  // ── Carga en WEB (online puro): polling al servidor ─────────────────────────
+  // No hay SQLite; leemos la cola directo de GET /orders/kitchen-pending (mismo
+  // endpoint que el desktop usa para ingerir pedidos digitales). El servidor ya
+  // filtra por sucursal (branchId del turno) y estado pendiente.
+  const loadWeb = useCallback(async () => {
+    // includePos=true: en web (sin SQLite) la cola muestra TODA la cocina de la
+    // sucursal, incluidas las ventas del propio cajero (no solo las digitales).
+    const params = new URLSearchParams({ includePos: 'true' });
+    if (branchId) params.set('branchId', String(branchId));
+    const res = await apiFetch(token, `/orders/kitchen-pending?${params.toString()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!Array.isArray(data)) return;
+    const mapped: KitchenOrder[] = data.map((o: any) => ({
+      id: o.id,
+      // En web el "id de trabajo" es el server id (no hay local_id).
+      localId: undefined,
+      isLocal: false,
+      channel: o.channel ?? 'pos',
+      orderNumber: o.orderNumber ?? String(o.id),
+      ticketNumber: o.ticketNumber,
+      createdAt: o.createdAt,
+      items: (o.items ?? []).map((it: any) => ({
+        id: undefined,
+        quantity: it.quantity,
+        product: { name: it.name ?? 'Producto', emoji: it.emoji ?? '🍽️' },
+        notes: it.notes,
+      })),
+    }));
+    setOrders(mapped);
+  }, [token, branchId]);
+
   const load = useCallback(async () => {
-    if (!tauri) { setOrders([]); return; }
     try {
-      const fallback24h = Date.now() - 24 * 60 * 60 * 1000;
-      const sinceTs = shiftOpenedAt
-        ? new Date(shiftOpenedAt).getTime()
-        : fallback24h;
-      const rows = await getPendingKitchenOrders(sinceTs, branchId);
-      const mapped: KitchenOrder[] = rows.map(o => {
-        let payload: any = {};
-        try { payload = JSON.parse(o.payload); } catch {}
-        const isUnsynced = o.synced === 0;
-        return {
-          id: o.server_id ?? 0,
-          localId: o.local_id,
-          isLocal: isUnsynced,
-          // Canal: columna nueva, o del payload (retrocompat con filas viejas).
-          channel: o.channel ?? payload.channel ?? 'pos',
-          orderNumber: o.local_id.slice(0, 8).toUpperCase(),
-          // El ticketNumber real lo generó la PC y está en el payload. Solo si
-          // faltara (órdenes viejas pre-cambio) caemos al sufijo del localId.
-          ticketNumber: payload.ticketNumber ?? o.local_id.slice(0, 4).toUpperCase(),
-          createdAt: payload.clientCreatedAt ?? new Date(o.created_at).toISOString(),
-          items: (payload.items ?? []).map((it: any) => {
-            const product = products.find(p => p.id === it.productId);
-            return {
-              id: it.productId,
-              quantity: it.quantity,
-              product: {
-                name: it.productName ?? product?.name ?? '?',
-                emoji: product?.emoji ?? '🍽️',
-              },
-              notes: it.notes,
-            };
-          }),
-        };
-      });
-      setOrders(mapped);
+      if (tauri) await loadTauri();
+      else await loadWeb();
     } catch (e) {
-      console.warn('[KITCHEN] load: SQLite read failed', String(e));
+      console.warn('[KITCHEN] load failed', String(e));
     }
-  }, [tauri, products, shiftOpenedAt, branchId]);
+  }, [tauri, loadTauri, loadWeb]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  // Recargar cuando el pull (syncService) ingresa pedidos WhatsApp/web nuevos.
+  // Recargar cuando el pull (syncService, solo desktop) ingresa pedidos nuevos.
   useEffect(() => {
     const onKitchenUpdate = () => load();
     window.addEventListener(KITCHEN_UPDATED_EVENT, onKitchenUpdate);
     return () => window.removeEventListener(KITCHEN_UPDATED_EVENT, onKitchenUpdate);
   }, [load]);
+
+  // En WEB no hay syncService: la cola se refresca con polling propio cada 30s.
+  useEffect(() => {
+    if (tauri) return;
+    const id = setInterval(() => load(), 30_000);
+    return () => clearInterval(id);
+  }, [tauri, load]);
 
   // Re-render cada minuto para actualizar los timers sin tocar nada más
   useEffect(() => {
@@ -133,28 +167,36 @@ function KitchenStrip({ refreshKey, onComplete, branchId, warningMins, dangerMin
     return () => clearInterval(t);
   }, []);
 
-  // Complete local-first: actualiza SQLite (instantáneo) y dispara sync en background.
-  // No espera red — la UI refleja el cambio al toque y JAMÁS reaparece la orden
-  // porque la cocina se nutre del estado local, no del servidor.
+  // Marca un pedido como listo.
+  //  - DESKTOP (Tauri): local-first en SQLite (instantáneo) + sync en background.
+  //    No espera red y jamás reaparece porque la cocina se nutre del estado local.
+  //  - WEB (online): PATCH /orders/:id/complete directo al servidor.
   const complete = async (order: KitchenOrder) => {
-    if (!order.localId) {
-      console.warn('[KITCHEN] complete: orden sin localId — no se puede completar localmente', order);
-      return;
-    }
-    const key = order.localId;
+    const key = order.localId ?? `s${order.id}`;
     setCompleting(key);
-
     try {
-      // 1) Persistir en SQLite — fuente de verdad local
-      await markKitchenCompletedLocally(order.localId);
-      // 2) Quitar de UI optimistamente
-      setOrders(prev => prev.filter(o => o.localId !== key));
-      onComplete();
-      // 3) Disparar sync en background — sin esperar
-      requestImmediateSync();
+      if (tauri) {
+        if (!order.localId) {
+          console.warn('[KITCHEN] complete: orden sin localId', order);
+          return;
+        }
+        await markKitchenCompletedLocally(order.localId);
+        setOrders(prev => prev.filter(o => o.localId !== order.localId));
+        onComplete();
+        requestImmediateSync();
+      } else {
+        // Web: completar en el servidor. Solo quitamos de la UI si el server confirma.
+        if (!order.id) { console.warn('[KITCHEN] complete web: orden sin id', order); return; }
+        const res = await apiFetch(token, `/orders/${order.id}/complete`, { method: 'PATCH' });
+        if (res.ok || res.status === 404 || res.status === 409) {
+          setOrders(prev => prev.filter(o => o.id !== order.id));
+          onComplete();
+        } else {
+          load(); // no confirmado: recargar para no dejar la UI inconsistente
+        }
+      }
     } catch (e) {
-      console.warn('[KITCHEN] complete: SQLite write failed', String(e));
-      // Si falla SQLite (raro), recargamos para no dejar la UI inconsistente
+      console.warn('[KITCHEN] complete failed', String(e));
       load();
     } finally {
       setCompleting(null);
@@ -1035,6 +1077,10 @@ export default function HomePage() {
             // y no podía sincronizarse. Ahora con server_id seteado, forzamos
             // un ciclo de sync para que el PATCH /complete salga sin esperar 30s.
             requestImmediateSync();
+          } else {
+            // Web: la venta ya existe en el servidor → refrescar la cola de cocina
+            // para que aparezca de inmediato (el refresh previo fue antes del POST).
+            setKitchenKey(k => k + 1);
           }
         } else if (tauri) {
           // El sync service reintentará en próximo ciclo (ya está en outbox).
