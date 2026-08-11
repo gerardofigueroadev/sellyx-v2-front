@@ -60,11 +60,28 @@ export async function syncPendingOrders(
         signal: AbortSignal.timeout(15_000),
       });
 
-      if (res.ok) {
-        const saved = await res.json();
-        // Idempotencia: el backend devuelve la orden existente (200) en lugar
-        // de 409, así que `saved.id` siempre es el server_id real.
-        await markOrderSynced(order.local_id, saved.id);
+      // 200 (creada o idempotente) y 409 (ya existe) → la orden YA está en el
+      // server. Debemos marcarla synced SIEMPRE, aunque el parseo del body falle
+      // (proxy/gateway devuelve algo no-JSON). Antes, un json() que lanzaba caía
+      // al catch → incrementRetry y la venta quedaba atascada pese a existir.
+      if (res.ok || res.status === 409) {
+        let serverId: number | null = null;
+        try {
+          const saved = await res.json();
+          serverId = saved?.id ?? null;
+        } catch { /* body no-JSON: da igual, la orden existe */ }
+        // Si no tenemos id del body, lo obtenemos por reconciliación (localId).
+        if (serverId == null) {
+          const found = await reconcileOneByLocalId(order.local_id, token, apiBase);
+          serverId = found;
+        }
+        if (serverId != null) {
+          await markOrderSynced(order.local_id, serverId);
+        } else {
+          // Raro: 2xx sin id resoluble. No la re-subimos (existe); dejamos que la
+          // reconciliación del cierre la resuelva. Contamos el intento.
+          await incrementRetry(order.local_id, 'ok-sin-id');
+        }
       } else {
         await incrementRetry(order.local_id, `HTTP ${res.status}`);
       }
@@ -241,21 +258,79 @@ async function countUnsynced(): Promise<number> {
 }
 
 /**
- * Drena la cola ANTES de cerrar caja: crea las órdenes pendientes en el server
- * y envía TODOS los "Listo" (complete) que aún no replicaron. Devuelve cuántos
- * items quedan sin sincronizar. Si devuelve 0, es seguro cerrar caja sin que el
- * backend cancele ventas ya cobradas.
+ * RECONCILIACIÓN (solo Tauri): pregunta al server cuáles de las ventas del outbox
+ * sin subir YA existen allí (por su localId) y las marca como sincronizadas sin
+ * re-subir. Resuelve el atasco donde una venta ya guardada en el server queda
+ * "pendiente de subir" para siempre (falló el parseo/markSynced tras un 200, o
+ * el token expiró justo después de crearla). Devuelve cuántas reconcilió.
+ * NUNCA lanza: si algo falla, no bloquea el flujo de cierre.
+ */
+/** Resuelve el server id de UN localId consultando /orders/reconcile. null si no existe. */
+async function reconcileOneByLocalId(
+  localId: string,
+  token: string,
+  apiBase: string,
+): Promise<number | null> {
+  try {
+    const res = await fetch(`${apiBase}/orders/reconcile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ localIds: [localId] }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const rows: { localId: string; id: number }[] = await res.json();
+    return Array.isArray(rows) && rows[0]?.id != null ? rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function reconcileOutbox(
+  getToken: () => Promise<string | null>,
+  apiBase: string,
+): Promise<number> {
+  if (!isTauri() || !navigator.onLine) return 0;
+  try {
+    const pending = await getPendingOrders();
+    if (pending.length === 0) return 0;
+    const token = await getToken();
+    if (!token) return 0;
+
+    const localIds = pending.map(o => o.local_id);
+    const res = await fetch(`${apiBase}/orders/reconcile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ localIds }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return 0;
+    const existing: { localId: string; id: number }[] = await res.json();
+    if (!Array.isArray(existing) || existing.length === 0) return 0;
+
+    let fixed = 0;
+    for (const row of existing) {
+      if (!row?.localId || row?.id == null) continue;
+      try {
+        await markOrderSynced(row.localId, row.id);
+        fixed++;
+      } catch { /* seguir con las demás */ }
+    }
+    return fixed;
+  } catch {
+    return 0; // reconciliación es best-effort; nunca bloquea
+  }
+}
+
+/**
+ * Drena la cola ANTES de cerrar caja: reconcilia contra el server, crea las
+ * órdenes pendientes y envía los "Listo" (complete) que no replicaron. Devuelve
+ * cuántos items quedan sin sincronizar. Si devuelve 0, es seguro cerrar caja.
  *
- * IMPORTANTE — sin falsos positivos con internet lento:
- * NO cortamos por reloj. Mientras haya PROGRESO (el contador de pendientes baja
- * en cada vuelta), seguimos esperando aunque la red esté lenta — cada request
- * ya tiene su propio timeout de 15s, así que "lento pero funciona" termina bien.
- * Solo nos rendimos cuando pasan `maxStalls` vueltas SEGUIDAS sin que baje ni un
- * pendiente (eso sí es conexión rota, no lenta). Ahí avisamos y el cajero
- * reintenta — nada se pierde: el estado ya está a salvo en SQLite local.
- *
- * Reintenta también porque un complete depende de que su creación haya obtenido
- * server_id primero (dos pasos, a veces dos vueltas).
+ * IMPORTANTE — sin falsos positivos con internet lento: no cortamos por reloj.
+ * Mientras haya PROGRESO seguimos aunque la red esté lenta (cada request tiene su
+ * timeout de 15s). Solo nos rendimos tras `maxStalls` vueltas sin bajar ni un
+ * pendiente (conexión rota, no lenta). Nada se pierde: el estado ya está en SQLite.
  */
 export async function drainBeforeShiftClose(
   getToken: () => Promise<string | null>,
@@ -274,11 +349,22 @@ export async function drainBeforeShiftClose(
   const tauri = true;
   let stalls = 0;
 
+  // PRIMER PASO: reconciliar contra el server. Muchas veces las "pendientes de
+  // subir" YA están en el server (fallo al marcar synced tras un 200). Esto las
+  // desatasca de golpe sin re-subir, y a menudo deja remaining=0 sin drenar nada.
+  await reconcileOutbox(getToken, apiBase).catch(() => {});
+  remaining = await countUnsynced();
+  if (remaining === 0) return { remaining: 0, stalled: false };
+
   // Sin límite de vueltas por tiempo: el freno es la falta de progreso.
   // Con progreso continuo, esto avanza hasta vaciar la cola por lenta que esté.
   while (remaining > 0 && stalls < maxStalls) {
     await syncPendingOrders(getToken, apiBase).catch(() => {});
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
+    // Nota: syncPendingOrders ya reconcilia por-orden ante un 2xx/409 sin id, así
+    // que NO repetimos reconcileOutbox aquí (evita round-trips redundantes en una
+    // red lenta durante el cierre). El reconcile inicial (antes del loop) cubre el
+    // caso masivo de ventas ya-en-server.
 
     const after = await countUnsynced();
     if (after === 0) return { remaining: 0, stalled: false };

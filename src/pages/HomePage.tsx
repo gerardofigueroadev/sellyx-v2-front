@@ -868,19 +868,33 @@ export default function HomePage() {
     if (!cancelPending) {
       try {
         // Drena mientras haya progreso (aguanta internet lento sin falsos
-        // positivos). Solo devuelve remaining>0 si de verdad no pudo subir.
+        // positivos). Primero RECONCILIA: las ventas que ya están en el server
+        // (aunque el outbox las vea "sin subir") se marcan solas → normalmente
+        // deja remaining=0 sin bloquear. Solo devuelve remaining>0 si de verdad
+        // quedan ventas que nunca llegaron al server.
         const { remaining } = await drainBeforeShiftClose(getValidToken, API);
         if (remaining > 0) {
-          // No se pudo subir todo (sin red o conexión rota, no solo lenta). No
-          // cerramos a ciegas: avisamos para que reintente y no se pierdan
-          // ventas cobradas. El estado local ya está a salvo en SQLite.
-          const msg = navigator.onLine
-            ? `No se pudieron subir ${remaining} venta(s) al servidor. Revisa tu internet e intenta cerrar la caja de nuevo.`
-            : `Sin conexión: hay ${remaining} venta(s) sin subir. Conéctate a internet antes de cerrar la caja.`;
-          toast.error(msg);
+          // Aún quedan ventas que NO están en el server tras reconciliar. No
+          // cerramos a ciegas, pero tampoco dejamos la caja trabada: ofrecemos
+          // FORZAR el cierre como último recurso. Al forzar, cerramos el turno en
+          // el server y las ventas no subidas quedan a salvo en SQLite (se
+          // reintentan solas al reabrir la caja / recuperar internet).
           requestImmediateSync();
-          setShiftLoading(false);
-          return;
+          const forzar = window.confirm(
+            `Hay ${remaining} venta(s) que aún no se subieron al servidor ` +
+            `(posible problema de internet).\n\n` +
+            `Aceptar = CERRAR la caja de todos modos. Esas ventas quedan guardadas ` +
+            `en esta computadora y se subirán solas cuando vuelva el internet.\n\n` +
+            `Cancelar = NO cerrar ahora (reintentar cuando tengas mejor conexión).`
+          );
+          if (!forzar) {
+            toast.warning(`Caja no cerrada. ${remaining} venta(s) pendientes de subir.`);
+            setShiftLoading(false);
+            return;
+          }
+          // Forzado: continúa al cierre normal más abajo. Las ventas no subidas
+          // NO se pierden (siguen en el outbox y el syncService las reintenta).
+          toast.warning(`Cerrando caja. ${remaining} venta(s) se subirán al recuperar internet.`);
         }
       } catch {
         // Si el drenaje falla por completo, seguimos: el backend igual avisará
