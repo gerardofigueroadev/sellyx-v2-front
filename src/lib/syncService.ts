@@ -4,6 +4,7 @@ import {
   upsertServerKitchenOrder,
 } from './db';
 import { isTauri } from './isTauri';
+import { captureEvent } from './analytics';
 
 /** Evento que avisa a la cola de cocina que ingresaron pedidos nuevos (pull). */
 export const KITCHEN_UPDATED_EVENT = 'sellyx:kitchen-updated';
@@ -295,18 +296,22 @@ export async function reconcileOutbox(
     const pending = await getPendingOrders();
     if (pending.length === 0) return 0;
     const token = await getToken();
-    if (!token) return 0;
+    if (!token) { console.warn('[CAJA] reconcile: sin token, no se puede reconciliar'); return 0; }
 
     const localIds = pending.map(o => o.local_id);
+    console.log(`[CAJA] reconcile: consultando al servidor por ${localIds.length} venta(s) sin subir…`);
     const res = await fetch(`${apiBase}/orders/reconcile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ localIds }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (!res.ok) return 0;
+    if (!res.ok) { console.warn(`[CAJA] reconcile: el servidor respondió HTTP ${res.status}`); return 0; }
     const existing: { localId: string; id: number }[] = await res.json();
-    if (!Array.isArray(existing) || existing.length === 0) return 0;
+    if (!Array.isArray(existing) || existing.length === 0) {
+      console.log('[CAJA] reconcile: ninguna de esas ventas está en el servidor todavía');
+      return 0;
+    }
 
     let fixed = 0;
     for (const row of existing) {
@@ -314,10 +319,20 @@ export async function reconcileOutbox(
       try {
         await markOrderSynced(row.localId, row.id);
         fixed++;
-      } catch { /* seguir con las demás */ }
+      } catch (e) {
+        console.warn(`[CAJA] reconcile: fallo al marcar ${row.localId} como subida:`, String(e));
+      }
+    }
+    console.log(`[CAJA] reconcile: ${existing.length} ya estaban en el servidor → ${fixed} marcadas como subidas`);
+    // Visibilidad remota: si reconcilió algo, es que hubo ventas "fantasma"
+    // (ya en server pero mal marcadas). Saber cuántas y en qué versión ayuda a
+    // detectar si el bug reaparece en algún cliente.
+    if (fixed > 0) {
+      captureEvent('caja_reconcile_desatascadas', { cantidad: fixed, consultadas: localIds.length });
     }
     return fixed;
-  } catch {
+  } catch (e) {
+    console.warn('[CAJA] reconcile: error (no bloquea el cierre):', String(e));
     return 0; // reconciliación es best-effort; nunca bloquea
   }
 }
@@ -341,10 +356,12 @@ export async function drainBeforeShiftClose(
 
   // Atajo instantáneo: si no hay nada pendiente, cerrar de una (caso normal).
   let remaining = await countUnsynced();
-  if (remaining === 0) return { remaining: 0, stalled: false };
+  if (remaining === 0) { console.log('[CAJA] cierre: sin ventas pendientes, cerrando directo'); return { remaining: 0, stalled: false }; }
+
+  console.log(`[CAJA] cierre: hay ${remaining} item(s) sin sincronizar antes de cerrar`);
 
   // Sin red declarada por el SO: no intentamos (evita esperas inútiles).
-  if (!navigator.onLine) return { remaining, stalled: false };
+  if (!navigator.onLine) { console.warn('[CAJA] cierre: sin conexión, no se puede drenar ahora'); return { remaining, stalled: false }; }
 
   const tauri = true;
   let stalls = 0;
@@ -354,7 +371,8 @@ export async function drainBeforeShiftClose(
   // desatasca de golpe sin re-subir, y a menudo deja remaining=0 sin drenar nada.
   await reconcileOutbox(getToken, apiBase).catch(() => {});
   remaining = await countUnsynced();
-  if (remaining === 0) return { remaining: 0, stalled: false };
+  if (remaining === 0) { console.log('[CAJA] cierre: todo reconciliado, ya se puede cerrar'); return { remaining: 0, stalled: false }; }
+  console.log(`[CAJA] cierre: tras reconciliar quedan ${remaining} sin subir → intentando subirlas…`);
 
   // Sin límite de vueltas por tiempo: el freno es la falta de progreso.
   // Con progreso continuo, esto avanza hasta vaciar la cola por lenta que esté.
@@ -367,16 +385,20 @@ export async function drainBeforeShiftClose(
     // caso masivo de ventas ya-en-server.
 
     const after = await countUnsynced();
-    if (after === 0) return { remaining: 0, stalled: false };
+    if (after === 0) { console.log('[CAJA] cierre: todas las ventas subieron, ya se puede cerrar'); return { remaining: 0, stalled: false }; }
 
     // ¿Progresó? (bajó al menos 1). Si sí, reseteamos el contador de estancamiento.
-    if (after < remaining) stalls = 0;
-    else stalls++;
+    if (after < remaining) { console.log(`[CAJA] cierre: progreso ${remaining}→${after}`); stalls = 0; }
+    else { stalls++; console.warn(`[CAJA] cierre: sin progreso (${after} atascadas), intento ${stalls}/${maxStalls}`); }
 
     remaining = after;
   }
 
   // Se estancó: varias vueltas sin bajar ni un pendiente → conexión rota, no lenta.
+  console.warn(`[CAJA] cierre: no se pudieron subir ${remaining} venta(s) tras ${maxStalls} intentos`);
+  // Visibilidad remota: el cierre quedó bloqueado por ventas que no suben. Es el
+  // síntoma exacto del bug original — queremos saber si le pasa a algún cliente.
+  captureEvent('caja_cierre_bloqueado', { ventas_sin_subir: remaining, online: navigator.onLine });
   return { remaining, stalled: stalls >= maxStalls };
 }
 

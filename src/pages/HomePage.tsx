@@ -9,6 +9,7 @@ import QrChargeModal from '../components/QrChargeModal';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
 import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
 import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose, KITCHEN_UPDATED_EVENT } from '../lib/syncService';
+import { captureEvent } from '../lib/analytics';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
 
@@ -889,11 +890,13 @@ export default function HomePage() {
           );
           if (!forzar) {
             toast.warning(`Caja no cerrada. ${remaining} venta(s) pendientes de subir.`);
+            captureEvent('caja_cierre_pospuesto', { ventas_sin_subir: remaining });
             setShiftLoading(false);
             return;
           }
           // Forzado: continúa al cierre normal más abajo. Las ventas no subidas
           // NO se pierden (siguen en el outbox y el syncService las reintenta).
+          captureEvent('caja_cierre_forzado', { ventas_sin_subir: remaining, shiftId: activeShift.id });
           toast.warning(`Cerrando caja. ${remaining} venta(s) se subirán al recuperar internet.`);
         }
       } catch {
