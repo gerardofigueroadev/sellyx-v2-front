@@ -141,6 +141,39 @@ export async function getPendingCount(): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
+/**
+ * Resumen de por qué las ventas del outbox no suben — para diagnóstico remoto
+ * (PostHog) del cierre de caja. Agrupa los last_error de las pendientes y su
+ * conteo, para saber la CAUSA (401 token, 400 validación, timeout…) sin abrir la
+ * consola. Devuelve el error más común y el desglose.
+ */
+export async function getOutboxErrorSummary(): Promise<{
+  total: number;
+  maxRetry: number;
+  topError: string | null;
+  errors: Record<string, number>;
+}> {
+  const db = await getDb();
+  const rows = await db.select<{ last_error: string | null; retry_count: number }[]>(
+    'SELECT last_error, retry_count FROM orders_outbox WHERE synced = 0',
+  );
+  const errors: Record<string, number> = {};
+  let maxRetry = 0;
+  for (const r of rows) {
+    // Normalizamos el error a una etiqueta corta (HTTP 401, timeout, etc.) para
+    // no explotar en cardinalidad. Truncamos a 60 chars.
+    const key = (r.last_error ?? 'sin-error-registrado').slice(0, 60);
+    errors[key] = (errors[key] ?? 0) + 1;
+    if (r.retry_count > maxRetry) maxRetry = r.retry_count;
+  }
+  let topError: string | null = null;
+  let topCount = 0;
+  for (const [k, v] of Object.entries(errors)) {
+    if (v > topCount) { topError = k; topCount = v; }
+  }
+  return { total: rows.length, maxRetry, topError, errors };
+}
+
 /** Devuelve el server_id de una orden ya sincronizada por su local_id (o null). */
 export async function getServerIdForLocalId(localId: string): Promise<number | null> {
   const db = await getDb();

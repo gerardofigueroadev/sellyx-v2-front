@@ -1,7 +1,7 @@
 import {
   getPendingOrders, markOrderSynced, incrementRetry, getPendingCount,
   getKitchenCompletedToSync, markKitchenCompleteSynced, getKitchenCompletedPendingCount,
-  upsertServerKitchenOrder,
+  upsertServerKitchenOrder, getOutboxErrorSummary,
 } from './db';
 import { isTauri } from './isTauri';
 import { captureEvent } from './analytics';
@@ -351,7 +351,13 @@ export async function drainBeforeShiftClose(
   getToken: () => Promise<string | null>,
   apiBase: string,
   maxStalls = 3,
-): Promise<{ remaining: number; stalled: boolean }> {
+): Promise<{
+  remaining: number;
+  stalled: boolean;
+  motivo?: string;
+  motivos_detalle?: Record<string, number>;
+  max_reintentos?: number;
+}> {
   if (!isTauri()) return { remaining: 0, stalled: false }; // web sin outbox: nada que drenar
 
   // Atajo instantáneo: si no hay nada pendiente, cerrar de una (caso normal).
@@ -396,10 +402,18 @@ export async function drainBeforeShiftClose(
 
   // Se estancó: varias vueltas sin bajar ni un pendiente → conexión rota, no lenta.
   console.warn(`[CAJA] cierre: no se pudieron subir ${remaining} venta(s) tras ${maxStalls} intentos`);
-  // Visibilidad remota: el cierre quedó bloqueado por ventas que no suben. Es el
-  // síntoma exacto del bug original — queremos saber si le pasa a algún cliente.
-  captureEvent('caja_cierre_bloqueado', { ventas_sin_subir: remaining, online: navigator.onLine });
-  return { remaining, stalled: stalls >= maxStalls };
+  // Adjuntamos el motivo del fallo (last_error del outbox) al resultado para que
+  // el llamador (HomePage) arme el evento PostHog con TODO el contexto (branch,
+  // shift, org). Así el diagnóstico remoto dice POR QUÉ no suben sin abrir consola.
+  const diag = await getOutboxErrorSummary().catch(() => null);
+  console.warn('[CAJA] cierre: motivo del atasco →', diag?.topError, diag?.errors);
+  return {
+    remaining,
+    stalled: stalls >= maxStalls,
+    motivo: diag?.topError ?? 'desconocido',
+    motivos_detalle: diag?.errors ?? {},
+    max_reintentos: diag?.maxRetry ?? 0,
+  };
 }
 
 export function startSyncService(

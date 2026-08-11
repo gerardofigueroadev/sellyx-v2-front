@@ -873,13 +873,24 @@ export default function HomePage() {
         // (aunque el outbox las vea "sin subir") se marcan solas → normalmente
         // deja remaining=0 sin bloquear. Solo devuelve remaining>0 si de verdad
         // quedan ventas que nunca llegaron al server.
-        const { remaining } = await drainBeforeShiftClose(getValidToken, API);
+        const drain = await drainBeforeShiftClose(getValidToken, API);
+        const remaining = drain.remaining;
         if (remaining > 0) {
           // Aún quedan ventas que NO están en el server tras reconciliar. No
           // cerramos a ciegas, pero tampoco dejamos la caja trabada: ofrecemos
           // FORZAR el cierre como último recurso. Al forzar, cerramos el turno en
           // el server y las ventas no subidas quedan a salvo en SQLite (se
           // reintentan solas al reabrir la caja / recuperar internet).
+          // Evento con CAUSA + contexto (branch/shift) para diagnóstico remoto.
+          captureEvent('caja_cierre_bloqueado', {
+            ventas_sin_subir: remaining,
+            online: navigator.onLine,
+            motivo: drain.motivo ?? 'desconocido',
+            motivos_detalle: drain.motivos_detalle ?? {},
+            max_reintentos: drain.max_reintentos ?? 0,
+            branchId: activeBranchId,
+            shiftId: activeShift.id,
+          });
           requestImmediateSync();
           const forzar = window.confirm(
             `Hay ${remaining} venta(s) que aún no se subieron al servidor ` +
@@ -890,13 +901,19 @@ export default function HomePage() {
           );
           if (!forzar) {
             toast.warning(`Caja no cerrada. ${remaining} venta(s) pendientes de subir.`);
-            captureEvent('caja_cierre_pospuesto', { ventas_sin_subir: remaining });
+            captureEvent('caja_cierre_pospuesto', {
+              ventas_sin_subir: remaining, motivo: drain.motivo ?? 'desconocido',
+              branchId: activeBranchId, shiftId: activeShift.id,
+            });
             setShiftLoading(false);
             return;
           }
           // Forzado: continúa al cierre normal más abajo. Las ventas no subidas
           // NO se pierden (siguen en el outbox y el syncService las reintenta).
-          captureEvent('caja_cierre_forzado', { ventas_sin_subir: remaining, shiftId: activeShift.id });
+          captureEvent('caja_cierre_forzado', {
+            ventas_sin_subir: remaining, motivo: drain.motivo ?? 'desconocido',
+            branchId: activeBranchId, shiftId: activeShift.id,
+          });
           toast.warning(`Cerrando caja. ${remaining} venta(s) se subirán al recuperar internet.`);
         }
       } catch {
