@@ -646,6 +646,31 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // ── DEBUG TEMPORAL (quitar tras diagnosticar la tablet Honor) ─────────────
+  // Detecta el SÍNTOMA reportado: hay productos en el carrito pero el total se
+  // ve en 0, o algún precio quedó NaN. Corre cada vez que cambia el carrito y,
+  // si detecta la anomalía, la reporta a PostHog para verla remoto en su tablet.
+  useEffect(() => {
+    if (cartItems.length === 0) return;
+    try {
+      const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
+      const algunPrecioNaN = cartItems.some(i => Number.isNaN(Number(i.price)));
+      // Anomalía: tengo items pero el total es 0/NaN, o hay un precio inválido.
+      if (total <= 0 || algunPrecioNaN) {
+        captureEvent('pos_debug_render_mismatch', {
+          items_en_estado: cartItems.length,
+          badge_orden: cartItems.reduce((s, i) => s + i.quantity, 0),
+          total_pedido: total,
+          algun_precio_NaN: algunPrecioNaN,
+          detalle: cartItems.map(i => ({
+            id: i.id, name: i.name, price: i.price,
+            price_type: typeof i.price, qty: i.quantity,
+          })),
+        });
+      }
+    } catch { /* debug nunca debe romper el flujo */ }
+  }, [cartItems]);
+
 
   // Re-fetch shift and kitchen whenever the active branch changes
   useEffect(() => {
@@ -959,8 +984,36 @@ export default function HomePage() {
   const handleAdd = (product: ApiProduct) => {
     setCartItems(prev => {
       const existing = prev.find(i => i.id === product.id);
-      if (existing) return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
-      return [...prev, { ...product, quantity: 1 }];
+      const next = existing
+        ? prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i)
+        : [...prev, { ...product, quantity: 1 }];
+
+      // ── DEBUG TEMPORAL (quitar tras diagnosticar la tablet Honor) ──────────
+      // Captura remota vía PostHog: qué pasa exactamente al tocar un producto.
+      // Permite ver, sin la tablet a mano, si el estado incrementa, si el
+      // precio llega bien y si el total se calcula. `captureEvent` es no-op si
+      // PostHog no está activo, así que no rompe nada.
+      try {
+        const total = next.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
+        const badge = next.reduce((s, i) => s + i.quantity, 0); // lo que se ve en "Orden N"
+        captureEvent('pos_debug_add_producto', {
+          productId: product.id,
+          productId_type: typeof product.id,
+          productName: product.name,
+          price: product.price,
+          price_type: typeof product.price,
+          price_parsed: Number(product.price),
+          price_isNaN: Number.isNaN(Number(product.price)),
+          existia: !!existing,
+          qty_antes: existing?.quantity ?? 0,
+          qty_despues: (existing?.quantity ?? 0) + 1,
+          items_en_carrito: next.length,
+          badge_orden: badge,          // el número del badge "Orden N"
+          total_pedido: total,         // TOTAL del pedido tras este toque
+        });
+      } catch { /* debug nunca debe romper el flujo */ }
+
+      return next;
     });
   };
 
