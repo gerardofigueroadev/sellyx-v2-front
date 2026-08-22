@@ -32,6 +32,11 @@ export function initAnalytics(): void {
     capture_pageleave: true,
     // No se pierden eventos si la app está offline: se reintentan al reconectar.
     autocapture: true,
+    // Sube al dashboard (PostHog → Error tracking) las EXCEPCIONES JS no
+    // capturadas, con stack trace, navegador, `app_version` y org. Sin esto, un
+    // error que crashea el render (ej. `crypto.randomUUID` inexistente en una
+    // tablet vieja → pantalla en blanco al cobrar) era invisible en las métricas.
+    capture_exceptions: true,
     // Metadatos comunes a TODOS los eventos → segmentar desktop vs web y versión.
     loaded: (ph) => {
       ph.register({

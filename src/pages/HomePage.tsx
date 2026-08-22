@@ -12,6 +12,7 @@ import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShi
 import { captureEvent } from '../lib/analytics';
 import { useSync } from '../hooks/useSync';
 import { isTauri } from '../lib/isTauri';
+import { safeUUID } from '../lib/uuid';
 
 import API_URL from '../config';
 import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
@@ -548,7 +549,7 @@ export default function HomePage() {
   // Idempotency key estable mientras el carrito tenga items. Se regenera al
   // vaciarlo (tras un checkout). Si el cajero hace doble-click, ambos POST
   // llevan el mismo localId y el backend deduplica via orders.service.ts.
-  const [cartLocalId, setCartLocalId] = useState(() => crypto.randomUUID());
+  const [cartLocalId, setCartLocalId] = useState(() => safeUUID());
   const [kitchenKey, setKitchenKey] = useState(0);
 
   const isAdmin = hasPermission('orders:view_all');
@@ -1069,7 +1070,7 @@ export default function HomePage() {
 
     // UI optimista: vaciar carrito, regenerar localId, refrescar cocina, mostrar print
     setCartItems([]);
-    setCartLocalId(crypto.randomUUID());
+    setCartLocalId(safeUUID());
     setKitchenKey(k => k + 1);
     setPendingPrintTicket(ticketData);
     toast.success(`Venta registrada — ${currency} ${total.toFixed(2)}`);
