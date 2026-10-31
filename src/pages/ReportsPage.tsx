@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import PedidosYaPrintReceipt from '../components/PedidosYaPrintReceipt';
+import { applyPrinterAndPrint } from '../hooks/usePrinterStore';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
@@ -372,9 +374,20 @@ const fmtWeekDay = (d: string) =>
   new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
 
 function TabPedidosYa({ token, branchId }: { token: string; branchId: string }) {
-  const { currency, hasPermission } = useAuth();
+  const { currency, hasPermission, user } = useAuth();
   const toast = useToast();
   const canVoid = hasPermission('orders:void');
+  const orgName = (user as any)?.organization?.name ?? 'Mi Negocio';
+  const [printing, setPrinting] = useState(false);
+
+  // Igual que el cierre de caja: el voucher se monta y recién ahí se imprime.
+  useEffect(() => {
+    if (!printing) return;
+    const cleanup = () => setPrinting(false);
+    window.addEventListener('afterprint', cleanup, { once: true });
+    applyPrinterAndPrint(() => window.print());
+    return () => window.removeEventListener('afterprint', cleanup);
+  }, [printing]);
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<PlatformReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -436,11 +449,21 @@ function TabPedidosYa({ token, branchId }: { token: string; branchId: string }) 
         {offset === 0
           ? <span className="text-xs text-amber-400">Semana en curso (cierra el miércoles)</span>
           : <button onClick={() => setOffset(0)} className="text-xs text-blue-400 hover:text-blue-300">Ir a la semana actual</button>}
-        <button onClick={copySummary} disabled={!data || data.count === 0}
-          className="ml-auto bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-40 text-slate-200 text-sm px-3 py-1.5 rounded-xl">
-          📋 Copiar resumen
-        </button>
+        <div className="ml-auto flex gap-2">
+          <button onClick={copySummary} disabled={!data || data.count === 0}
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-40 text-slate-200 text-sm px-3 py-1.5 rounded-xl">
+            📋 Copiar resumen
+          </button>
+          <button onClick={() => setPrinting(true)} disabled={!data || data.count === 0 || printing}
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-40 text-slate-200 text-sm px-3 py-1.5 rounded-xl">
+            🖨️ Imprimir
+          </button>
+        </div>
       </div>
+
+      {printing && data && (
+        <PedidosYaPrintReceipt data={{ ...data, from, to }} orgName={orgName} currency={currency} />
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {loading ? [1, 2, 3].map(i => <div key={i} className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />) : (

@@ -300,7 +300,7 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
             onClick={onPlatformOrder}
             className="w-full bg-rose-600/15 hover:bg-rose-600/25 border border-rose-500/50 disabled:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600 disabled:cursor-not-allowed text-rose-300 font-semibold py-2.5 rounded-xl transition text-sm"
           >
-            🛵 Registrar como PedidosYa
+            🛵 PedidosYa
           </button>
         )}
       </div>
