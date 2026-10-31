@@ -859,7 +859,7 @@ function TabPermisos({ allPermissions, loading, roles, rolesLoading }: { allPerm
 }
 
 // ─── Tab Flags ────────────────────────────────────────────────────────────────
-interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; kitchenStripPosition?: 'bottom' | 'right'; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; showCategoryFilters?: boolean; posLayout?: 'grid' | 'columns'; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
+interface OrgSettings { autoPrintOnShiftClose?: boolean; autoPrintTicketOnOrder?: boolean; allowItemNotes?: boolean; showKitchenStrip?: boolean; kitchenStripPosition?: 'bottom' | 'right'; allowVoids?: boolean; showProductEmoji?: boolean; showCustomerLookup?: boolean; showCategoryFilters?: boolean; pedidosYaEnabled?: boolean; posLayout?: 'grid' | 'columns'; kitchenWarningMins?: number; kitchenDangerMins?: number; currency?: string; enabledPaymentMethods?: string[]; [key: string]: any; }
 
 function FlagToggle({ label, description, value, onChange, saving }: {
   label: string; description: string; value: boolean;
@@ -1123,6 +1123,13 @@ function TabFlags({ token }: { token: string }) {
           description="Muestra los chips de categorías arriba de la lista de productos para filtrar. Desactívalo para ganar espacio vertical en pantallas pequeñas."
           value={settings.showCategoryFilters !== false}
           onChange={v => toggle('showCategoryFilters', v)}
+          saving={saving}
+        />
+        <FlagToggle
+          label="Registrar pedidos de PedidosYa"
+          description="Muestra el botón 🛵 PedidosYa en el carrito. El pedido se guarda aparte (sin cobro ni caja) y aparece en Reportes → PedidosYa, agrupado por semana de jueves a miércoles."
+          value={!!settings.pedidosYaEnabled}
+          onChange={v => toggle('pedidosYaEnabled', v)}
           saving={saving}
         />
       </div>

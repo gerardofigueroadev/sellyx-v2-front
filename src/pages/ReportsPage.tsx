@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
@@ -344,8 +345,180 @@ function TabPagos({ summary, loading }: { summary: Summary | null; loading: bool
   );
 }
 
+// ─── Tab: PedidosYa ────────────────────────────────────────────────────────────
+// PedidosYa liquida por semana: de jueves a miércoles (el miércoles a la noche
+// se revisa la semana cerrada). Esta pestaña usa su propio selector de semana.
+const WEEK_START_DAY = 4; // jueves
+
+interface PlatformReport {
+  count: number; total: number;
+  products: Product[];
+  orders: {
+    id: number; createdAt: string; externalCode: string | null; total: number;
+    branch: string; cashier: string | null; items: { name: string; qty: number }[];
+  }[];
+}
+
+function settlementWeek(offset: number) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - ((start.getDay() - WEEK_START_DAY + 7) % 7) + offset * 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { from: localDateStr(start), to: localDateStr(end) };
+}
+
+const fmtWeekDay = (d: string) =>
+  new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
+
+function TabPedidosYa({ token, branchId }: { token: string; branchId: string }) {
+  const { currency, hasPermission } = useAuth();
+  const toast = useToast();
+  const canVoid = hasPermission('orders:void');
+  const [offset, setOffset] = useState(0);
+  const [data, setData] = useState<PlatformReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const { from, to } = settlementWeek(offset);
+
+  useEffect(() => {
+    if (!token) return;
+    setLoading(true);
+    const qs = new URLSearchParams({ from, to, platform: 'pedidosya' });
+    if (branchId !== 'all') qs.set('branchId', branchId);
+    apiFetch(token, `/platform-orders/report?${qs}`)
+      .then(r => (r.ok ? r.json() : null)).then(setData)
+      .finally(() => setLoading(false));
+  }, [token, from, to, branchId, reloadKey]);
+
+  const totalQty = data?.products.reduce((s, p) => s + p.qty, 0) ?? 0;
+
+  const copySummary = async () => {
+    if (!data) return;
+    const lines = [
+      `PedidosYa — ${fmtWeekDay(from)} al ${fmtWeekDay(to)}`,
+      `Pedidos: ${data.count}`,
+      `Total: ${bs(data.total, currency)}`,
+      '',
+      ...data.products.map(p => `${p.qty} × ${p.name} — ${bs(p.total, currency)}`),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      toast.success('Resumen copiado');
+    } catch {
+      toast.error('No se pudo copiar');
+    }
+  };
+
+  const voidOrder = async (id: number) => {
+    if (!window.confirm('¿Anular este pedido PedidosYa? Dejará de contar en el reporte.')) return;
+    const res = await fetch(`${API}/platform-orders/${id}/void`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) { toast.success('Pedido anulado'); setReloadKey(k => k + 1); }
+    else toast.error('No se pudo anular');
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Selector de semana */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1 bg-slate-800 border border-slate-700/50 rounded-xl p-1">
+          <button onClick={() => setOffset(o => o - 1)} className="px-3 py-1 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-700">‹</button>
+          <span className="px-2 text-sm font-semibold text-white whitespace-nowrap">
+            {fmtWeekDay(from)} — {fmtWeekDay(to)}
+          </span>
+          <button onClick={() => setOffset(o => Math.min(0, o + 1))} disabled={offset === 0}
+            className="px-3 py-1 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-transparent">›</button>
+        </div>
+        {offset === 0
+          ? <span className="text-xs text-amber-400">Semana en curso (cierra el miércoles)</span>
+          : <button onClick={() => setOffset(0)} className="text-xs text-blue-400 hover:text-blue-300">Ir a la semana actual</button>}
+        <button onClick={copySummary} disabled={!data || data.count === 0}
+          className="ml-auto bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-40 text-slate-200 text-sm px-3 py-1.5 rounded-xl">
+          📋 Copiar resumen
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {loading ? [1, 2, 3].map(i => <div key={i} className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />) : (
+          <>
+            <StatCard label="Pedidos"   value={String(data?.count ?? 0)}         sub="en la semana"          color="red" />
+            <StatCard label="Total"     value={bs(data?.total ?? 0, currency)}   sub="a precio de menú"      color="amber" />
+            <StatCard label="Productos" value={String(totalQty)}                 sub="unidades despachadas"  color="blue" />
+          </>
+        )}
+      </div>
+
+      {!loading && (!data || data.count === 0) && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-4xl mb-3">🛵</p>
+          <p className="text-slate-400 font-medium">Sin pedidos PedidosYa esta semana</p>
+        </div>
+      )}
+
+      {!loading && data && data.count > 0 && (
+        <>
+          <div className="bg-slate-800 border border-slate-700/50 rounded-2xl overflow-hidden">
+            <h3 className="text-white font-semibold text-sm px-4 pt-4 pb-2">Qué se llevaron</h3>
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 bg-slate-900/50">
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Producto</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right">Cant.</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {data.products.map(p => (
+                  <tr key={p.name} className="hover:bg-slate-700/40 transition-colors">
+                    <td className="px-4 py-2.5 text-white font-medium">{p.name}</td>
+                    <td className="px-4 py-2.5 text-slate-300 text-right">{p.qty}</td>
+                    <td className="px-4 py-2.5 text-white font-semibold text-right">{bs(p.total, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-slate-800 border border-slate-700/50 rounded-2xl overflow-hidden">
+            <h3 className="text-white font-semibold text-sm px-4 pt-4 pb-2">Pedidos</h3>
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-700 bg-slate-900/50">
+                  {['Fecha', 'N° PedidosYa', 'Detalle', 'Cajero', 'Total', ''].map(h => (
+                    <th key={h} className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {data.orders.map(o => (
+                  <tr key={o.id} className="hover:bg-slate-700/40 transition-colors">
+                    <td className="px-4 py-2.5 text-slate-300 text-xs whitespace-nowrap">{fmtDt(o.createdAt)}</td>
+                    <td className="px-4 py-2.5 text-slate-300">{o.externalCode ?? <span className="text-slate-600">—</span>}</td>
+                    <td className="px-4 py-2.5 text-slate-300 text-xs">{o.items.map(i => `${i.qty}× ${i.name}`).join(', ')}</td>
+                    <td className="px-4 py-2.5 text-slate-400 text-xs">{o.cashier ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-white font-semibold whitespace-nowrap">{bs(o.total, currency)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {canVoid && (
+                        <button onClick={() => voidOrder(o.id)} className="text-xs text-slate-500 hover:text-red-400">Anular</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
-type TabId = 'ventas' | 'productos' | 'turnos' | 'pagos';
+type TabId = 'ventas' | 'productos' | 'turnos' | 'pagos' | 'pedidosya';
 const TABS: { id: TabId; label: string }[] = [
   { id: 'ventas',    label: 'Ventas' },
   { id: 'productos', label: 'Productos' },
@@ -364,6 +537,20 @@ export default function ReportsPage() {
   const [summary,   setSummary]   = useState<Summary | null>(null);
   const [loading,   setLoading]   = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('ventas');
+  const [pedidosYaEnabled, setPedidosYaEnabled] = useState<boolean>(() => {
+    try { return !!JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}').pedidosYaEnabled; }
+    catch { return false; }
+  });
+  const tabs = pedidosYaEnabled ? [...TABS, { id: 'pedidosya' as TabId, label: '🛵 PedidosYa' }] : TABS;
+  const isPedidosYa = activeTab === 'pedidosya';
+
+  useEffect(() => {
+    if (!token) return;
+    apiFetch(token, '/organizations/my/settings')
+      .then(r => (r.ok ? r.json() : null))
+      .then(s => { if (s) setPedidosYaEnabled(!!s.pedidosYaEnabled); })
+      .catch(() => {});
+  }, [token]);
 
   // Construye query string para los sub-tabs
   const params = new URLSearchParams({ from, to });
@@ -400,7 +587,8 @@ export default function ReportsPage() {
 
       {/* Filtros */}
       <div className="shrink-0 border-b border-slate-700/50 px-6 py-4 flex flex-wrap items-center gap-3">
-        {/* Presets */}
+        {/* Presets (PedidosYa tiene su propio selector de semana) */}
+        {!isPedidosYa && <>
         <div className="flex gap-1 bg-slate-800 border border-slate-700/50 rounded-xl p-1">
           {PRESETS.map(p => {
             const active = p.from() === from && p.to() === to;
@@ -421,6 +609,7 @@ export default function ReportsPage() {
           <input type="date" value={to} onChange={e => setTo(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
+        </>}
 
         {/* Selector de sucursal (solo admin) */}
         {isAdmin && (
@@ -433,8 +622,8 @@ export default function ReportsPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-        {/* Tarjetas resumen */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Tarjetas resumen (ventas de caja; no aplican a PedidosYa) */}
+        <div className={`grid grid-cols-2 lg:grid-cols-5 gap-4 ${isPedidosYa ? 'hidden' : ''}`}>
           {loading ? (
             [1,2,3,4,5].map(i => <div key={i} className="h-24 rounded-2xl bg-slate-800 border border-slate-700/50 animate-pulse" />)
           ) : summary ? (
@@ -450,7 +639,7 @@ export default function ReportsPage() {
 
         {/* Pestañas */}
         <div className="flex gap-1 border-b border-slate-700/50 pb-0">
-          {TABS.map(t => (
+          {tabs.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
               className={`px-4 py-2 text-sm font-medium transition rounded-t-lg ${
                 activeTab === t.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
@@ -465,6 +654,7 @@ export default function ReportsPage() {
         {activeTab === 'productos' && <TabProductos token={token!} params={paramsStr} loading={loading} />}
         {activeTab === 'turnos'    && <TabTurnos    token={token!} params={paramsStr} loading={loading} />}
         {activeTab === 'pagos'     && <TabPagos     summary={summary} loading={loading} />}
+        {isPedidosYa               && <TabPedidosYa token={token!} branchId={branchId} />}
       </div>
     </div>
   );

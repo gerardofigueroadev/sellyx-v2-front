@@ -29,9 +29,11 @@ interface CartProps {
   onNoteChange?: (id: number, note: string) => void;
   allowItemNotes?: boolean;
   showCustomerLookup?: boolean;
+  /** Si viene, muestra "PedidosYa": registra el pedido aparte, sin cobro. */
+  onPlatformOrder?: () => void;
 }
 
-export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes, showCustomerLookup }: CartProps) {
+export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChange, allowItemNotes, showCustomerLookup, onPlatformOrder }: CartProps) {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const { currency, enabledPaymentMethods, token } = useAuth();
   const [notesOpen, setNotesOpen] = useState<Record<number, boolean>>({});
@@ -291,6 +293,16 @@ export default function Cart({ items, onRemove, onClear, onCheckout, onNoteChang
             ? 'Procesando...'
             : (visibleOptions.find(o => o.key === activeMethod)?.checkoutLabel ?? '💵 Cobrar')}
         </button>
+
+        {onPlatformOrder && (
+          <button
+            disabled={items.length === 0 || isCheckingOut}
+            onClick={onPlatformOrder}
+            className="w-full bg-rose-600/15 hover:bg-rose-600/25 border border-rose-500/50 disabled:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600 disabled:cursor-not-allowed text-rose-300 font-semibold py-2.5 rounded-xl transition text-sm"
+          >
+            🛵 Registrar como PedidosYa
+          </button>
+        )}
       </div>
 
       {/* Customer history modal */}

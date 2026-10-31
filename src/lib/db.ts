@@ -61,6 +61,19 @@ async function getDb(): Promise<Database> {
   // Canal de origen (aditivo, retrocompat). Filas existentes → 'pos'.
   await ensureColumn(_db, 'orders_outbox', 'channel', `channel TEXT DEFAULT 'pos'`);
 
+  // Pedidos de PedidosYa: outbox APARTE de orders_outbox. No tienen cobro ni
+  // turno, así que no deben contar para el cierre de caja ni la cola de cocina.
+  await _db.execute(`
+    CREATE TABLE IF NOT EXISTS platform_orders_outbox (
+      local_id     TEXT PRIMARY KEY,
+      payload      TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      synced       INTEGER DEFAULT 0,
+      retry_count  INTEGER DEFAULT 0,
+      last_error   TEXT
+    )
+  `);
+
   // CRÍTICO: tras agregar la columna `kitchen_status` con DEFAULT 'pending',
   // TODAS las filas existentes (incluyendo órdenes ya completadas hace días)
   // quedan marcadas como pendientes. Esto rompe al cliente: la cola de cocina
@@ -182,6 +195,45 @@ export async function getServerIdForLocalId(localId: string): Promise<number | n
     [localId],
   );
   return rows[0]?.server_id ?? null;
+}
+
+// ── Pedidos PedidosYa (outbox aparte, sin caja) ─────────────────────────────
+
+export interface PlatformOutboxOrder {
+  local_id: string;
+  payload: string;
+  created_at: number;
+  synced: number;
+  retry_count: number;
+  last_error: string | null;
+}
+
+export async function savePlatformOrderToOutbox(localId: string, payload: object): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    'INSERT OR IGNORE INTO platform_orders_outbox (local_id, payload, created_at) VALUES (?, ?, ?)',
+    [localId, JSON.stringify(payload), Date.now()],
+  );
+}
+
+export async function getPendingPlatformOrders(): Promise<PlatformOutboxOrder[]> {
+  const db = await getDb();
+  return db.select<PlatformOutboxOrder[]>(
+    'SELECT * FROM platform_orders_outbox WHERE synced = 0 ORDER BY created_at ASC',
+  );
+}
+
+export async function markPlatformOrderSynced(localId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute('UPDATE platform_orders_outbox SET synced = 1 WHERE local_id = ?', [localId]);
+}
+
+export async function incrementPlatformRetry(localId: string, error: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    'UPDATE platform_orders_outbox SET retry_count = retry_count + 1, last_error = ? WHERE local_id = ?',
+    [error, localId],
+  );
 }
 
 // ── Cola de cocina (local-first) ────────────────────────────────────────────

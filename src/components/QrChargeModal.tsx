@@ -109,7 +109,7 @@ export default function QrChargeModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-xs bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-lg bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <span className="text-lg">📱</span>
@@ -143,18 +143,19 @@ export default function QrChargeModal({
 
           {phase === 'showing' && qr && (
             <>
-              <p className="text-slate-400 text-xs mb-2">Escanea con tu app bancaria y paga</p>
-              <div className="bg-white rounded-xl p-2 inline-block">
+              {/* BISA entrega el PNG a 512px: a este tamaño (~424px) se sigue viendo nítido. */}
+              <div className="bg-white rounded-xl p-3 w-full max-w-md mx-auto">
                 <img src={`data:image/png;base64,${qr.imagenQr}`} alt="QR de pago"
-                  className="w-52 h-52 object-contain" />
+                  className="w-full aspect-square object-contain" />
               </div>
-              <p className="text-white font-bold text-lg mt-3">{currency} {qr.monto.toFixed(2)}</p>
+              <p className="text-white font-bold text-2xl mt-3">{currency} {qr.monto.toFixed(2)}</p>
               <div className="flex items-center justify-center gap-2 mt-3 text-slate-400 text-xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
                 Esperando el pago…
               </div>
-              <button onClick={handleCancel} className="mt-4 text-slate-500 hover:text-slate-300 text-xs">
-                Cancelar
+              <button onClick={handleCancel}
+                className="mt-4 w-full bg-slate-700 hover:bg-red-500/20 border border-slate-600 hover:border-red-500/50 text-slate-200 hover:text-red-300 text-sm font-semibold py-2.5 rounded-xl transition-colors">
+                Cancelar cobro
               </button>
             </>
           )}

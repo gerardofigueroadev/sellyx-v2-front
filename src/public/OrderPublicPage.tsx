@@ -589,7 +589,7 @@ export default function OrderPublicPage() {
             <p className="text-white font-bold text-xl mt-1">{money(total, cur)}</p>
 
             {/* Área del QR según estado */}
-            <div className="mt-4 mx-auto w-56 h-56 bg-white rounded-xl flex items-center justify-center overflow-hidden">
+            <div className="mt-4 mx-auto w-full max-w-[18rem] aspect-square bg-white rounded-xl flex items-center justify-center overflow-hidden">
               {qrPay === 'loading' && <Spinner />}
               {qrPay === 'error' && (
                 <span className="text-red-500 text-xs px-3 text-center">{qrErr ?? 'Error al generar el QR'}</span>

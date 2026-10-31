@@ -6,8 +6,9 @@ import ProductCard from '../components/ProductCard';
 import Cart, { PaymentMethod, OrderType } from '../components/Cart';
 import ShiftPrintReceipt, { ShiftReportData } from '../components/ShiftPrintReceipt';
 import QrChargeModal from '../components/QrChargeModal';
+import PedidosYaModal from '../components/PedidosYaModal';
 import { OrderTicketData, ClientTicket, KitchenTicket } from '../components/OrderTicket';
-import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift } from '../lib/db';
+import { saveOrderToOutbox, markOrderSynced, getPendingKitchenOrders, markKitchenCompletedLocally, getNextTicketNumberForShift, savePlatformOrderToOutbox } from '../lib/db';
 import { startSyncService, stopSyncService, requestImmediateSync, drainBeforeShiftClose, KITCHEN_UPDATED_EVENT } from '../lib/syncService';
 import { captureEvent } from '../lib/analytics';
 import { useSync } from '../hooks/useSync';
@@ -566,6 +567,7 @@ export default function HomePage() {
   // Cobro con QR pendiente de pago (BISA). Guarda los datos del checkout hasta
   // que el pago se confirme, momento en que se completa la venta.
   const [pendingQr, setPendingQr] = useState<{ total: number; orderType: OrderType; customerId: number | null; customerPhone: string | null } | null>(null);
+  const [showPedidosYa, setShowPedidosYa] = useState(false);
   const [printChoice,  setPrintChoice]      = useState<'client' | 'kitchen' | 'both' | null>(null);
   const [orgSettings,  setOrgSettings]      = useState<Record<string, any>>(() => {
     try { return JSON.parse(localStorage.getItem('pos_org_settings') ?? '{}'); }
@@ -1187,6 +1189,57 @@ export default function HomePage() {
     syncInBackground();
   };
 
+  // PedidosYa: NO es una venta. Va a su propio outbox/endpoint, sin turno, sin
+  // ticket ni caja; solo queda para el reporte semanal de la liquidación.
+  const handlePedidosYa = async (externalCode: string) => {
+    if (!token || cartItems.length === 0) return;
+    const localId = cartLocalId;
+    const total = cartItems.reduce((s, i) => s + Number(i.price) * i.quantity, 0);
+    const payload = {
+      localId,
+      platform: 'pedidosya',
+      clientCreatedAt: new Date().toISOString(),
+      ...(externalCode.trim() ? { externalCode: externalCode.trim() } : {}),
+      items: cartItems.map(i => ({
+        productId:   i.id,
+        productName: i.name,
+        quantity:    i.quantity,
+        unitPrice:   Number(i.price),
+      })),
+      ...(isAdmin && activeBranchId ? { branchId: activeBranchId } : {}),
+    };
+
+    if (tauri) {
+      // Local-first: queda en SQLite y el syncService lo sube cuando haya red.
+      try {
+        await savePlatformOrderToOutbox(localId, payload);
+      } catch (e) {
+        console.error('[PEDIDOSYA] savePlatformOrderToOutbox failed', e);
+        toast.error('No se pudo guardar el pedido PedidosYa — intenta de nuevo');
+        return;
+      }
+      requestImmediateSync();
+    } else {
+      // Web sin outbox: solo se registra si el servidor lo confirma.
+      try {
+        const res = await apiFetch(token, '/platform-orders', { method: 'POST', body: JSON.stringify(payload) });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          toast.error(d.message ?? 'No se pudo registrar el pedido PedidosYa');
+          return;
+        }
+      } catch {
+        toast.error('Sin conexión — pedido PedidosYa no registrado');
+        return;
+      }
+    }
+
+    setShowPedidosYa(false);
+    setCartItems([]);
+    setCartLocalId(safeUUID());
+    toast.success(`PedidosYa registrado — ${currency} ${total.toFixed(2)}`);
+  };
+
   const shiftTime = activeShift
     ? new Date(activeShift.openedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true })
     : null;
@@ -1204,6 +1257,14 @@ export default function HomePage() {
             if (p) handleCheckout('qr', p.orderType, p.customerId, p.customerPhone, true);
           }}
           onClose={() => setPendingQr(null)}
+        />
+      )}
+      {showPedidosYa && (
+        <PedidosYaModal
+          items={cartItems}
+          currency={currency}
+          onConfirm={handlePedidosYa}
+          onClose={() => setShowPedidosYa(false)}
         />
       )}
       {/* Auto-print on shift close */}
@@ -1470,6 +1531,7 @@ export default function HomePage() {
             onCheckout={(pm, ot, cid, cphone) => handleCheckout(pm, ot, cid, cphone)}
             allowItemNotes={!!orgSettings.allowItemNotes}
             showCustomerLookup={!!orgSettings.showCustomerLookup}
+            onPlatformOrder={orgSettings.pedidosYaEnabled ? () => setShowPedidosYa(true) : undefined}
             onNoteChange={(id, note) => setCartItems(prev => prev.map(i => i.id === id ? { ...i, note } : i))}
           />
         </div>

@@ -2,6 +2,7 @@ import {
   getPendingOrders, markOrderSynced, incrementRetry, getPendingCount,
   getKitchenCompletedToSync, markKitchenCompleteSynced, getKitchenCompletedPendingCount,
   upsertServerKitchenOrder, getOutboxErrorSummary,
+  getPendingPlatformOrders, markPlatformOrderSynced, incrementPlatformRetry,
 } from './db';
 import { isTauri } from './isTauri';
 import { captureEvent } from './analytics';
@@ -197,6 +198,44 @@ export async function pullKitchenOrders(
       window.dispatchEvent(new CustomEvent(KITCHEN_UPDATED_EVENT));
     }
   } catch { /* red intermitente: la próxima vuelta reintenta */ }
+}
+
+/**
+ * Sube los pedidos PedidosYa del outbox propio. Independiente de las ventas:
+ * no entra en el badge de pendientes ni en drainBeforeShiftClose (no hay caja
+ * que cuadrar). El backend es idempotente por localId, así que reintentar es seguro.
+ */
+let isSyncingPlatform = false;
+export async function syncPendingPlatformOrders(
+  getToken: () => Promise<string | null>,
+  apiBase: string,
+): Promise<void> {
+  if (isSyncingPlatform || !navigator.onLine || !isTauri()) return;
+  const pending = await getPendingPlatformOrders();
+  if (pending.length === 0) return;
+
+  const token = await getToken();
+  if (!token) return;
+
+  isSyncingPlatform = true;
+  try {
+    for (const o of pending) {
+      try {
+        const res = await fetch(`${apiBase}/platform-orders`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: o.payload,
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (res.ok) await markPlatformOrderSynced(o.local_id);
+        else await incrementPlatformRetry(o.local_id, `HTTP ${res.status}`);
+      } catch (e) {
+        await incrementPlatformRetry(o.local_id, String(e));
+      }
+    }
+  } finally {
+    isSyncingPlatform = false;
+  }
 }
 
 export async function syncPendingReorders(
@@ -427,6 +466,7 @@ export function startSyncService(
     //                   3) settings en paralelo
     await syncPendingOrders(getToken, apiBase).catch(() => {});
     await syncPendingCompletes(getToken, apiBase, tauri).catch(() => {});
+    await syncPendingPlatformOrders(getToken, apiBase).catch(() => {});
     await syncPendingSettings(getToken, apiBase).catch(() => {});
     await syncPendingReorders(getToken, apiBase).catch(() => {});
     // Pull de pedidos WhatsApp/web hacia la cola de cocina (cada 30s, junto al ciclo).
